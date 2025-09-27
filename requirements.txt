@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+psycopg2-binary
+python-dotenv
+httpx
+requests
+pydantic
+celery
+redis
+jinja2
+sendgrid
+pytest
+pytest-mock

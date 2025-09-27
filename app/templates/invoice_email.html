@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Invoice from Ryze Works</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f9f9f9; color: #222; padding: 2em; }
+        .container { background: #fff; padding: 2em; border-radius: 8px; box-shadow: 0 1px 3px #ccc; max-width: 500px; margin: auto; }
+        h2 { color: #0072c6; }
+        .info { margin-bottom: 1em; }
+        .footer { margin-top: 2em; font-size: 0.9em; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Invoice</h2>
+        <div class="info">
+            <p><strong>To:</strong> {{ name }}</p>
+            <p><strong>Amount Due:</strong> {{ amount_due }}</p>
+            <p><strong>Due Date:</strong> {{ due_date }}</p>
+        </div>
+        <p>Thank you for choosing Ryze Works for your IT & Services needs. If you have any questions, reply to this email or visit <a href="https://ryzeworks.com">ryzeworks.com</a>.</p>
+
+        <div class="footer">
+            Sent at {{ sent_at if sent_at is defined else '' }}<br>
+            Ryze Works &mdash; Digital Solutions for Ambitious Teams
+        </div>
+    </div>
+</body>
+</html>
+
