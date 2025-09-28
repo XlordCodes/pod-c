@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from database import get_db
 from models import Message
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
 router = APIRouter()
@@ -20,8 +20,7 @@ class ContactOut(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     created_at: datetime
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class MessageOut(BaseModel):
     id: int
@@ -30,8 +29,7 @@ class MessageOut(BaseModel):
     message_body: str
     created_at: datetime
     contact: Optional[ContactOut] = None
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 @router.get("/messages", response_model=List[MessageOut])
 def get_messages(

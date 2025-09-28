@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from database import get_db
 from models import Contact
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
 router = APIRouter()
@@ -17,8 +17,7 @@ class ContactOut(ContactIn):
     id: int
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 @router.post("/contacts", response_model=ContactOut)
 def create_contact(contact: ContactIn, db: Session = Depends(get_db)):
