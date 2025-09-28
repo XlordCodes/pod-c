@@ -34,7 +34,7 @@ def test_webhook_creates_message(client):
     signature = "sha256=" + mac.hexdigest()
     response = client.post(
         "/api/webhooks/whatsapp",
-        data=body_bytes,
+        content=body_bytes,
         headers={"X-Hub-Signature": signature}
     )
     assert response.status_code == 200

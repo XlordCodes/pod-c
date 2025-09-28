@@ -42,7 +42,7 @@ def test_webhook_accepts_valid_signature(client):
     signature = "sha256=" + mac.hexdigest()
     response = client.post(
         "/api/webhooks/whatsapp",
-        data=body_bytes,
+        content=body_bytes,
         headers={"X-Hub-Signature": signature}
     )
     print("DEBUG RESPONSE:", response.text)  # This will provide the true failure reason
