@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from database import get_db
-from models import Contact
+from app.database import get_db
+from app.models import Contact
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 

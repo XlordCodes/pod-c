@@ -1,24 +1,32 @@
 services:
+  app:
+    build: .
+    # Command is now handled by Dockerfile CMD
+    volumes:
+      # Mount the entire project directory to /code in the container
+      # This allows --reload to see changes in any file
+      - .:/code
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./.env
+    # The PYTHONPATH override is removed, no longer needed.
+    environment:
+      # Override DB connection for container networking
+      - DATABASE_URL=postgresql://postgres:abcdabcd@db:5432/crm_main
+    depends_on:
+      - db
+
   db:
     image: postgres:14
+    container_name: crm_postgres_db
     restart: always
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: abcdabcd
-      POSTGRES_DB: crm_main
     volumes:
       - ./postgres-data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
-      
-  app:
-    build: .
-    command: uvicorn main:app --reload --host 0.0.0.0 --port 8000
-    volumes:
-      - ./app:/app
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env
-    depends_on:
-      - db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: abcdabcd
+      POSTGRES_DB: crm_main
+
