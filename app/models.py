@@ -11,6 +11,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime, timezone
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON
 
 # A single, shared Base for all models in the application.
 Base = declarative_base()
@@ -106,3 +107,35 @@ class Message(Base):
     
     # Establishes the many-to-one relationship from Message to Contact.
     contact = relationship("Contact", back_populates="messages")
+
+# -------------------------
+# Bulk Job Model
+# -------------------------
+class BulkJob(Base):
+    __tablename__ = "bulk_jobs"
+
+    id = Column(Integer, primary_key=True)
+    template_name = Column(String, nullable=False) # Renamed from 'template'
+    language_code = Column(String, nullable=False, default="en_US") # New
+    components = Column(JSON, nullable=True) # New (for template parameters/components)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    status = Column(String, default="queued")  # queued, running, done, failed
+
+    messages = relationship("BulkMessage", back_populates="job")
+
+# -------------------------
+# Bulk Message Model
+# -------------------------
+class BulkMessage(Base):
+    __tablename__ = "bulk_messages"
+
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey("bulk_jobs.id"), nullable=False, index=True)
+    to_number = Column(String, index=True)
+    status = Column(String, default="pending")  # pending, sent, failed
+    attempts = Column(Integer, default=0)
+    last_error = Column(String)
+    payload = Column(JSON) # Optional: to store the exact payload sent
+
+    # Relationship
+    job = relationship("BulkJob", back_populates="messages")

@@ -9,6 +9,7 @@ from app.api.webhooks import router as webhooks_router
 from app.api.messages import router as messages_router
 from app.api.contacts import router as contacts_router
 from app.api.whatsapp import router as whatsapp_router
+from app.api.bulk import router as bulk_router
 
 # The new authentication router from our integration
 # --- FIX: Import the 'router' object *from* the module ---
@@ -40,7 +41,7 @@ app.include_router(webhooks_router, prefix="/api", tags=["Webhooks"])
 app.include_router(messages_router, prefix="/api", tags=["Messages"])
 app.include_router(contacts_router, prefix="/api", tags=["Contacts"])
 app.include_router(whatsapp_router, prefix="/api", tags=["WhatsApp"])
-
+app.include_router(bulk_router, prefix="/api/bulk", tags=["Bulk Messaging"])
 
 # --- ROOT ENDPOINT ---
 @app.get("/", tags=["Root"])
