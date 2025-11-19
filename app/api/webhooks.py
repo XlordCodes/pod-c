@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request, Header, HTTPException, Depends
 import hmac, hashlib, os, json
-from database import get_db
-from models import Message
+from app.database import get_db
+from app.models import Message
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
