@@ -115,13 +115,13 @@ class BulkJob(Base):
     __tablename__ = "bulk_jobs"
 
     id = Column(Integer, primary_key=True)
-    template = Column(String, nullable=False)
+    template_name = Column(String, nullable=False) # Renamed from 'template'
+    language_code = Column(String, nullable=False, default="en_US") # New
+    components = Column(JSON, nullable=True) # New (for template parameters/components)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     status = Column(String, default="queued")  # queued, running, done, failed
 
-    # Relationship (optional but good practice)
     messages = relationship("BulkMessage", back_populates="job")
-
 
 # -------------------------
 # Bulk Message Model
