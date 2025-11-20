@@ -1,3 +1,15 @@
+import logging
+
+# --- Robust Logging Configuration ---
+# Set the root logger level to WARNING. This will silence SQLAlchemy's INFO spam.
+logging.basicConfig(level=logging.WARNING) 
+
+# Set specific loggers back to INFO so we can see Uvicorn startup
+# and our own application-level logs.
+logging.getLogger("uvicorn").setLevel(logging.INFO)
+logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+
 from fastapi import FastAPI
 from dotenv import load_dotenv
 
@@ -10,6 +22,9 @@ from app.api.messages import router as messages_router
 from app.api.contacts import router as contacts_router
 from app.api.whatsapp import router as whatsapp_router
 from app.api.bulk import router as bulk_router
+from app.api.vector import router as vector_router
+from app.api.chat import router as chat_router
+from app.api.replies import router as replies_router
 
 # The new authentication router from our integration
 # --- FIX: Import the 'router' object *from* the module ---
@@ -42,6 +57,9 @@ app.include_router(messages_router, prefix="/api", tags=["Messages"])
 app.include_router(contacts_router, prefix="/api", tags=["Contacts"])
 app.include_router(whatsapp_router, prefix="/api", tags=["WhatsApp"])
 app.include_router(bulk_router, prefix="/api/bulk", tags=["Bulk Messaging"])
+app.include_router(vector_router, prefix="/api", tags=["AI/Vector"])
+app.include_router(chat_router, prefix="/api", tags=["Chat/NLP"])
+app.include_router(replies_router, prefix="/api", tags=["AI/Replies"])
 
 # --- ROOT ENDPOINT ---
 @app.get("/", tags=["Root"])
