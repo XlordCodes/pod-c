@@ -73,3 +73,8 @@ urllib3==2.5.0
 uvicorn[standard]==0.29.0 
 watchfiles==1.1.0
 websockets==15.0.1
+tenacity
+langdetect
+pgvector
+transformers
+torch

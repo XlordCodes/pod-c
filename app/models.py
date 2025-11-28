@@ -1,18 +1,10 @@
 # app/models.py
 from sqlalchemy import (
-    Column,
-    Integer,
-    String,
-    Text,
-    DateTime,
-    JSON,
-    ForeignKey,
-    func
+    Column, Integer, String, Text,  DateTime, JSON, ForeignKey, func
 )
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON
-
+ 
 # A single, shared Base for all models in the application.
 Base = declarative_base()
 
@@ -139,3 +131,27 @@ class BulkMessage(Base):
 
     # Relationship
     job = relationship("BulkJob", back_populates="messages")
+
+# -------------------------
+# Conversation and ChatMessage Models
+# -------------------------
+class Conversation(Base):
+    __tablename__ = "conversations"
+    id = Column(Integer, primary_key=True)
+    customer_number = Column(String, index=True)
+    last_message_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))    
+    # Note: Relationships (like messages) are added by the subsequent class or later.
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"))
+    from_number = Column(String)
+    text = Column(Text)
+    language = Column(String, default="unknown")
+    intent = Column(String, default="unclassified")
+    # Fix: Add Sentiment Column (Module 5 requirement)
+    sentiment = Column(String, default="neutral") 
+    
+    # Fix: Use timezone-aware default
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

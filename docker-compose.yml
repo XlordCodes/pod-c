@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    # Command is now handled by Dockerfile CMD
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000  # <-- ADD THIS LINE
     volumes:
       # Mount the entire project directory to /code in the container
       # This allows --reload to see changes in any file
@@ -18,7 +18,7 @@ services:
       - db
 
   db:
-    image: postgres:14
+    image: ankane/pgvector:v0.5.1 # Pre-built Postgres 15 + pgvector
     container_name: crm_postgres_db
     restart: always
     volumes:
@@ -29,4 +29,3 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: abcdabcd
       POSTGRES_DB: crm_main
-
