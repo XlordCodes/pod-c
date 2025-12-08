@@ -26,10 +26,8 @@ from app.api.vector import router as vector_router
 from app.api.chat import router as chat_router
 from app.api.replies import router as replies_router
 from app.api.status import router as status_router
-
-# The new authentication router from our integration
-# --- FIX: Import the 'router' object *from* the module ---
 from app.authentication.router import router as auth_router
+from app.api.analytics import router as analytics_router
 
 
 # Load environment variables from the .env file
@@ -62,7 +60,7 @@ app.include_router(vector_router, prefix="/api", tags=["AI/Vector"])
 app.include_router(chat_router, prefix="/api", tags=["Chat/NLP"])
 app.include_router(replies_router, prefix="/api", tags=["AI/Replies"])
 app.include_router(status_router, prefix="/api", tags=["Reliability/Dashboard"])
-
+app.include_router(analytics_router, prefix="/api", tags=["Analytics & BI"])
 # --- ROOT ENDPOINT ---
 @app.get("/", tags=["Root"])
 def root():

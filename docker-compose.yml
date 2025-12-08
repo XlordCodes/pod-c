@@ -1,24 +1,34 @@
 services:
   app:
     build: .
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000  # <-- ADD THIS LINE
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
-      # Mount the entire project directory to /code in the container
-      # This allows --reload to see changes in any file
       - .:/code
     ports:
       - "8000:8000"
     env_file:
       - ./.env
-    # The PYTHONPATH override is removed, no longer needed.
     environment:
-      # Override DB connection for container networking
-      - DATABASE_URL=postgresql://postgres:abcdabcd@db:5432/crm_main
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
-      - db
+      db:
+        condition: service_healthy  
+
+  worker:
+    build: .
+    command: python -m app.worker
+    volumes:
+      - .:/code
+    env_file:
+      - ./.env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      db:
+        condition: service_healthy 
 
   db:
-    image: ankane/pgvector:v0.5.1 # Pre-built Postgres 15 + pgvector
+    image: ankane/pgvector:v0.5.1
     container_name: crm_postgres_db
     restart: always
     volumes:
@@ -26,6 +36,11 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: abcdabcd
-      POSTGRES_DB: crm_main
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5

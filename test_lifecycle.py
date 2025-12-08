@@ -114,7 +114,24 @@ def run_test():
     send_webhook("Status: DELIVERED", status_delivered)
     time.sleep(1)
 
-    # --- SCENARIO 4: Check Dashboard ---
+    # --- SCENARIO 4: Status Update - READ ---
+    status_read = {
+        "entry": [{
+            "changes": [{
+                "value": {
+                    "statuses": [{
+                        "id": wamid,
+                        "status": "read",
+                        "timestamp": str(int(time.time()))
+                    }]
+                }
+            }]
+        }]
+    }
+    send_webhook("Status: READ", status_read)
+    time.sleep(1)
+
+    # --- SCENARIO 5: Check Dashboard ---
     print("\n📊 Checking Dashboard Metrics...")
     try:
         resp = requests.get(f"{BASE_URL}/api/status/metrics")
