@@ -1,14 +1,13 @@
-# --- app/services/embedding_service.py ---
-import os
+# app/services/embedding_service.py
 import requests
 import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.models_vector import MessageEmbedding
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 # Cohere Embed Endpoint
 EMBED_URL = "https://api.cohere.ai/v1/embed"
 
@@ -18,9 +17,10 @@ class EmbeddingService:
 
     def embed_text(self, text: str) -> list[float]:
         """Call Cohere to get the vector embedding for a text string."""
-        if not COHERE_API_KEY:
-            logger.error("COHERE_API_KEY is not set.")
-            raise ValueError("COHERE_API_KEY is not set.")
+        # Validate API Key from settings
+        if not settings.COHERE_API_KEY:
+            logger.error("COHERE_API_KEY is not configured in settings.")
+            raise ValueError("COHERE_API_KEY is not configured.")
 
         # Cohere payload format
         payload = {
@@ -29,7 +29,7 @@ class EmbeddingService:
             "input_type": "search_document" # Optimized for storage
         }
         headers = {
-            "Authorization": f"Bearer {COHERE_API_KEY}",
+            "Authorization": f"Bearer {settings.COHERE_API_KEY}",
             "Content-Type": "application/json"
         }
 

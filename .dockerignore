@@ -1,0 +1,24 @@
+# Ignore local virtual environment 
+.venv/
+venv/
+env/
+
+# Ignore database data 
+postgres-data/
+
+# Ignore git history
+.git/
+.gitignore
+
+# Ignore caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+
+.vscode/
+.idea/
+
+.env
+.env.example

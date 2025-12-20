@@ -1,8 +1,9 @@
+# app/api/whatsapp.py
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import httpx
-import os
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -14,10 +15,15 @@ class WhatsAppTemplateSendIn(BaseModel):
 
 @router.post("/whatsapp/send-template")
 async def send_whatsapp_template(payload: WhatsAppTemplateSendIn):
-    access_token = os.getenv("WHATSAPP_TOKEN")
-    phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    """
+    Sends a WhatsApp template message using credentials from settings.
+    """
+    # Validate credentials from settings
+    access_token = settings.WHATSAPP_TOKEN
+    phone_number_id = settings.WHATSAPP_PHONE_NUMBER_ID
+    
     if not access_token or not phone_number_id:
-        raise HTTPException(status_code=500, detail="Missing WhatsApp credentials in env.")
+        raise HTTPException(status_code=500, detail="Missing WhatsApp credentials in configuration.")
 
     url = (
         f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
@@ -44,9 +50,10 @@ async def send_whatsapp_template(payload: WhatsAppTemplateSendIn):
             "components": components,
         },
     }
+    
     async with httpx.AsyncClient() as client:
         resp = await client.post(url, headers=headers, json=data)
+    
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=resp.json())
     return {"status": "sent", "whatsapp_response": resp.json()}
-

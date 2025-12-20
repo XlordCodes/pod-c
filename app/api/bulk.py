@@ -1,50 +1,77 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+# app/api/bulk.py
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.database import get_db 
-from app.schemas.bulk import BulkJobCreate, BulkJobStatus, BulkJobResponse
-from app.services.bulk_service import BulkService
-from app.models import BulkJob
+from typing import List
 
-router = APIRouter(prefix="/bulk", tags=["Bulk Messaging"])
+# --- Imports ---
+from app.database import get_db
+from app.models import BulkJob, BulkMessage, User 
+from app.schemas.bulk import BulkJobCreate, BulkJobResponse, BulkJobStatus
+from app.authentication.router import get_current_user
 
-# ----------------------------
-# Create a new bulk job
-# ----------------------------
-@router.post("/jobs", response_model=BulkJobResponse)
-def create_job(job_in: BulkJobCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+router = APIRouter(tags=["Bulk Messaging"])
+
+@router.post("/jobs", response_model=BulkJobResponse, status_code=201)
+def create_bulk_job(
+    job_request: BulkJobCreate, 
+    db: Session = Depends(get_db),
+    # current_user: User = Depends(get_current_user) # Uncomment when auth is ready
+):
     """
-    Create a new bulk messaging job, including full template configuration.
+    Creates a bulk messaging job record.
+    The separate Worker container (worker-1) will automatically pick this up,
+    send the messages, and update the status.
     """
-    service = BulkService(db)
-    job = service.create_job(
-        template_name=job_in.template_name,
-        language_code=job_in.language_code,
-        components=job_in.components,
-        numbers=job_in.numbers
+    # 1. Create the Parent Job Record
+    new_job = BulkJob(
+        template_name=job_request.template_name,
+        language_code=job_request.language_code,
+        status="queued",
+        # We save components if they exist (supported by your schema)
+        components=getattr(job_request, "components", []) 
     )
+    db.add(new_job)
+    db.flush() # Flush to generate new_job.id so we can use it below
+
+    # 2. Create the Child Message Records
+    # These are the actual rows the Worker will process.
+    messages_objects = []
+    for number in job_request.numbers:
+        msg = BulkMessage(
+            job_id=new_job.id,
+            to_number=number,
+            status="pending" # Worker will change this to 'sent'/'failed'
+        )
+        messages_objects.append(msg)
     
-    background_tasks.add_task(service.run_job, job.id)
+    db.add_all(messages_objects)
     
-    # We return the new fields in the response
+    # 3. Commit everything
+    db.commit()
+    db.refresh(new_job)
+
+    # 4. Return Response
     return {
-        "id": job.id,
-        "template_name": job.template_name,
-        "language_code": job.language_code,
-        "components": job.components,
-        "status": job.status,
-        "created_at": job.created_at,
-        "numbers": job_in.numbers,
+        "id": new_job.id,
+        "template_name": new_job.template_name,
+        "language_code": new_job.language_code,
+        "status": new_job.status,
+        "created_at": new_job.created_at,
+        "numbers": job_request.numbers,
+        "components": new_job.components
     }
 
-# ----------------------------
-# Get job status (remains simple)
-# ----------------------------
 @router.get("/jobs/{job_id}", response_model=BulkJobStatus)
-def job_status(job_id: int, db: Session = Depends(get_db)):
+def get_job_status(
+    job_id: int, 
+    db: Session = Depends(get_db),
+    # current_user: User = Depends(get_current_user)
+):
     """
-    Get the status of a specific bulk job and all its messages.
+    Get the status and message details of a bulk job.
     """
     job = db.get(BulkJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    
     return job

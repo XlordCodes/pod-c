@@ -1,42 +1,60 @@
+# app/nlp/simple_nlp.py
+"""
+Module: Lightweight NLP Utilities
+Context: Pod C - Module 3 (Incoming Message Parsing).
+
+Provides basic language detection and keyword-based intent classification.
+Designed as a placeholder that can be replaced by an LLM or ML model later.
+"""
+
 from langdetect import detect
 import logging
 
 logger = logging.getLogger(__name__)
 
 class SimpleNLPService:
-    """
-    Handles lightweight NLP tasks: language detection and simple keyword-based intent.
-    Designed to be easily swapped out for a Transformer model or LLM call.
-    """
-
+    # Keyword mapping for heuristic intent detection
     KEYWORDS = {
         "buy": "PURCHASE_INTENT",
         "price": "PRICING_QUERY",
+        "cost": "PRICING_QUERY",
         "hello": "GREETING",
-        "help": "SUPPORT_QUERY"
+        "hi": "GREETING",
+        "help": "SUPPORT_QUERY",
+        "issue": "SUPPORT_QUERY"
     }
 
     def analyze_text(self, text: str) -> dict[str, str]:
-        """Performs language detection and keyword analysis."""
+        """
+        Analyzes text to determine language and intent.
         
-        # 1. Language Detection (Safely)
+        Args:
+            text (str): The incoming message body.
+            
+        Returns:
+            dict: {'language': str, 'intent': str}
+        """
+        if not text:
+            return {"language": "unknown", "intent": "EMPTY"}
+
+        # 1. Language Detection
         try:
             lang = detect(text)
         except Exception:
+            # langdetect throws exception on empty/numeric text
             lang = "unknown"
-            logger.warning(f"Could not detect language for text: {text[:30]}...")
 
+        # 2. Intent Classification (Keyword Heuristic)
         lower_text = text.lower()
         intent = "UNCLASSIFIED"
         
-        # 2. Keyword Intent Analysis
         for k, tag in self.KEYWORDS.items():
             if k in lower_text:
                 intent = tag
                 break
                 
-        # 3. Handle Empty/Short Text
-        if len(text.strip()) < 5:
+        # 3. Special Case: Short messages
+        if len(text.strip()) < 3 and intent == "UNCLASSIFIED":
             intent = "SHORT_MESSAGE"
 
         return {"language": lang, "intent": intent}

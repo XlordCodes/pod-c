@@ -8,25 +8,25 @@ Routes incoming data to ChatService (for messages) or StatusService (for receipt
 """
 
 from fastapi import APIRouter, Request, Header, HTTPException, Depends
-import hmac, hashlib, os, json, logging
+import hmac, hashlib, json, logging
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.core.config import settings
 from app.services.chat_service import ChatService
 from app.services.status_service import StatusService 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-APP_SECRET = os.getenv("WHATSAPP_APP_SECRET")
-
 def verify_signature(body_bytes: bytes, signature_header: str) -> bool:
     """
     Validates the X-Hub-Signature header from Meta to ensure the request is authentic.
+    Uses the app secret from settings.
     """
-    if not signature_header or not APP_SECRET:
+    if not signature_header or not settings.WHATSAPP_APP_SECRET:
         return False
     algo, signature = signature_header.split("=", 1) if "=" in signature_header else (None, signature_header)
-    mac = hmac.new(APP_SECRET.encode(), msg=body_bytes, digestmod=hashlib.sha256)
+    mac = hmac.new(settings.WHATSAPP_APP_SECRET.encode(), msg=body_bytes, digestmod=hashlib.sha256)
     return hmac.compare_digest(mac.hexdigest(), signature)
 
 @router.post("/webhooks/whatsapp")

@@ -1,3 +1,4 @@
+# app/authentication/router.py
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -7,14 +8,10 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app import database
+from app.core.config import settings
 from . import crud, hashing, schemas
 
 # --- CONFIGURATION ---
-
-# JWT settings loaded from environment variables
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "default_secret")
-ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 
 # OAuth2PasswordBearer tells FastAPI where to look for the token (in the Authorization header)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
@@ -27,14 +24,18 @@ router = APIRouter(
 # --- HELPER FUNCTIONS ---
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
-    """Creates a new JWT access token."""
+    """Creates a new JWT access token using centralized settings."""
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
+        # Fallback to the default expiration time from settings
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    
+    # Sign the token using the secret key from settings
+    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
     return encoded_jwt
 
 def get_current_user(
@@ -43,7 +44,7 @@ def get_current_user(
 ):
     """
     Dependency to get the current user from a token.
-    This function will be used to protect routes.
+    Validates the token signature and expiration.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -51,7 +52,8 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # Decode and verify the token using settings
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
@@ -96,7 +98,8 @@ def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    # Use the expiration time defined in settings
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )

@@ -20,7 +20,7 @@ if not APP_SECRET:
 def send_webhook(event_type, payload):
     """Sends a signed POST request to your webhook endpoint."""
     
-    # --- FIX START: Serialize strictly once ---
+    # --- START: Serialize strictly once ---
     # We dump to a string with NO spaces (separators=(',', ':')) to match
     # what we used for the signature.
     payload_str = json.dumps(payload, separators=(',', ':'))
@@ -35,8 +35,6 @@ def send_webhook(event_type, payload):
     
     print(f"🔹 Sending {event_type} webhook...")
     try:
-        # --- FIX: Send 'data=payload_bytes' instead of 'json=payload'
-        # This prevents 'requests' from re-formatting the JSON with spaces.
         resp = requests.post(
             f"{BASE_URL}/api/webhooks/whatsapp", 
             data=payload_bytes, 
@@ -134,7 +132,7 @@ def run_test():
     # --- SCENARIO 5: Check Dashboard ---
     print("\n📊 Checking Dashboard Metrics...")
     try:
-        resp = requests.get(f"{BASE_URL}/api/status/metrics")
+        resp = requests.get(f"{BASE_URL}/api/status/summary")
         if resp.status_code == 200:
             data = resp.json()
             print(f"✅ Dashboard Data: {json.dumps(data, indent=2)}")

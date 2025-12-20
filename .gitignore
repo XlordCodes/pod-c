@@ -13,3 +13,4 @@ venv/
 ENV/
 .vscode/
 .idea/
+celerybeat-schedule
