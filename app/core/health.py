@@ -1,7 +1,8 @@
 # app/core/health.py
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 from sqlalchemy import text
-from app.database import SessionLocal
+from app.database import get_db
 
 router = APIRouter(prefix="/ops", tags=["Ops/Health"])
 
@@ -14,17 +15,19 @@ def liveness():
     return {"status": "alive"}
 
 @router.get("/ready")
-def readiness():
+def readiness(db: Session = Depends(get_db)):
     """
-    Checks if the application is ready to accept traffic.
-    Verifies Database connectivity.
+    Readiness probe: "Can I serve traffic?"
+    Verifies Database connectivity. 
+    Returns 503 if DB is down, causing Load Balancers to stop routing traffic here.
     """
     try:
-        # Create a fresh session to test DB connection
-        db = SessionLocal()
+        # Simple SQL execution to verify DB connection
         db.execute(text("SELECT 1"))
-        db.close()
         return {"status": "ready"}
     except Exception as e:
-        # Return 503 so Load Balancers stop sending traffic
-        return {"status": "db_error", "detail": str(e)}
+        # CRITICAL: Return 503 Service Unavailable so LBs stop sending traffic
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Database connectivity failed: {str(e)}"
+        )

@@ -2,11 +2,12 @@
 import logging
 import sys
 import json
+from app.core.context import get_request_id, get_user_id
 
 class JsonFormatter(logging.Formatter):
     """
     Formatter that outputs JSON strings after parsing the LogRecord.
-    Required for Module 8 (Observability).
+    Injects Correlation IDs (trace_id) and User IDs automatically.
     """
     def format(self, record):
         log_record = {
@@ -14,7 +15,8 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "message": record.getMessage(),
             "module": record.module,
-            "function": record.funcName,
+            "trace_id": get_request_id(), # <--- Auto-injected
+            "user_id": get_user_id(),     # <--- Auto-injected
         }
         if record.exc_info:
             log_record["exception"] = self.formatException(record.exc_info)
@@ -23,12 +25,11 @@ class JsonFormatter(logging.Formatter):
 def configure_logging():
     """
     Configures the root logger to output JSON to stdout.
-    Called by main.py and worker.py on startup.
     """
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     
-    # Remove existing handlers to avoid duplication during reloads
+    # Remove existing handlers
     if root_logger.handlers:
         root_logger.handlers = []
 

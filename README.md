@@ -54,7 +54,7 @@ crm-main/
 │   │    ├── aiclient.py
 │   │    └── contacts.py
 │   ├── integrations/
-│   │    └── whatsappclient.py
+│   │    └── whatsapp_client.py
 │   └── templates/
 │       └── invoice_email.html
 ├── tests/

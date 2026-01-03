@@ -3,12 +3,11 @@ import requests
 import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from app.models_vector import MessageEmbedding
+from app.models import MessageEmbedding
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Cohere Embed Endpoint
 EMBED_URL = "https://api.cohere.ai/v1/embed"
 
 class EmbeddingService:
@@ -16,17 +15,14 @@ class EmbeddingService:
         self.db = db
 
     def embed_text(self, text: str) -> list[float]:
-        """Call Cohere to get the vector embedding for a text string."""
-        # Validate API Key from settings
         if not settings.COHERE_API_KEY:
-            logger.error("COHERE_API_KEY is not configured in settings.")
+            logger.error("COHERE_API_KEY is not configured.")
             raise ValueError("COHERE_API_KEY is not configured.")
 
-        # Cohere payload format
         payload = {
-            "model": "embed-english-v3.0", # Industry standard for English
-            "texts": [text], # Cohere expects a list of strings
-            "input_type": "search_document" # Optimized for storage
+            "model": "embed-english-v3.0",
+            "texts": [text],
+            "input_type": "search_document"
         }
         headers = {
             "Authorization": f"Bearer {settings.COHERE_API_KEY}",
@@ -36,7 +32,6 @@ class EmbeddingService:
         try:
             response = requests.post(EMBED_URL, json=payload, headers=headers, timeout=20)
             response.raise_for_status()
-            # Cohere returns a list of embeddings, we take the first one
             return response.json()["embeddings"][0]
         except requests.exceptions.RequestException as e:
             logger.error(f"Error embedding text with Cohere: {e}")
@@ -44,7 +39,7 @@ class EmbeddingService:
 
     def store_embedding(self, message_id: int, vector: list[float]):
         """Save the vector to the database."""
-        emb = MessageEmbedding(message_id=message_id, vector=vector)
+        emb = MessageEmbedding(message_id=message_id, embedding=vector)
         self.db.add(emb)
         self.db.commit()
         self.db.refresh(emb)
@@ -52,10 +47,9 @@ class EmbeddingService:
 
     def search_similar(self, vector: list[float], limit=5):
         """Search for similar messages using Cosine Distance."""
-        # Note: For Cohere v3 models, Cosine Similarity is recommended.
-        # In pgvector, the <=> operator represents Cosine Distance.
+        # FIX: Updated SQL to use 'embedding' column
         sql = text("""
-            SELECT message_id, vector <=> :vec as distance 
+            SELECT message_id, embedding <=> :vec as distance 
             FROM message_embeddings
             ORDER BY distance ASC
             LIMIT :limit

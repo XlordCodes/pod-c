@@ -1,3 +1,4 @@
+# app/authentication/schemas.py
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from typing import Optional
@@ -17,6 +18,9 @@ class UserBase(BaseModel):
 # Inherits from UserBase and adds the password.
 class UserCreate(UserBase):
     password: str
+    # Optional: Allow setting tenant_id/role_id during creation for testing/admin
+    tenant_id: Optional[int] = 1 
+    role_id: Optional[int] = None
 
 # --- User Schema ---
 # Properties to be returned from the API when fetching a user.
@@ -24,6 +28,8 @@ class UserCreate(UserBase):
 class User(UserBase):
     id: int
     created_at: datetime
+    tenant_id: Optional[int] = None
+    role_id: Optional[int] = None
 
     class Config:
         # This allows Pydantic to read the data from an ORM object (SQLAlchemy)

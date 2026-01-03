@@ -1,46 +1,92 @@
 services:
+  # 1. Database (PostgreSQL with pgvector)
+  db:
+    image: ankane/pgvector:latest
+    container_name: crm_postgres_db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: crm_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d crm_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Redis (Queue & Cache)
+  redis:
+    image: redis/redis-stack-server:latest
+    container_name: crm_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 3. Main API (FastAPI)
   app:
     build: .
+    container_name: crm_backend_api
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/code
     ports:
       - "8000:8000"
-    env_file:
-      - ./.env
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - DATABASE_URL=postgresql://user:password@db:5432/crm_db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      # Add your real keys here in .env file, or uncomment below for testing
+      # - OPENAI_API_KEY=your_key_here
+      # - SENDGRID_API_KEY=your_key_here
     depends_on:
       db:
-        condition: service_healthy  
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
-  worker:
+  # 4. Background Worker (The Muscle)
+  # Processes Emails, AI, and WhatsApp Jobs
+  celery_worker:
     build: .
-    command: python -m app.worker
+    container_name: crm_celery_worker
+    # Command: Run the worker for the 'app.core.celery_app' application
+    command: celery -A app.core.celery_app worker --loglevel=info
     volumes:
       - .:/code
-    env_file:
-      - ./.env
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - DATABASE_URL=postgresql://user:password@db:5432/crm_db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
     depends_on:
-      db:
-        condition: service_healthy 
+      - db
+      - redis
 
-  db:
-    image: ankane/pgvector:v0.5.1
-    container_name: crm_postgres_db
-    restart: always
+  # 5. Celery Beat (The Clock/Scheduler) -- NEW!
+  # Triggers periodic tasks (like checking for scheduled campaigns)
+  celery_beat:
+    build: .
+    container_name: crm_celery_beat
+    # Command: Run the beat scheduler
+    command: celery -A app.core.celery_app beat --loglevel=info
     volumes:
-      - ./postgres-data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+      - .:/code
     environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      - DATABASE_URL=postgresql://user:password@db:5432/crm_db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+volumes:
+  postgres_data:
+  redis_data:
