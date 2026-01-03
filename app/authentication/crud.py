@@ -1,6 +1,7 @@
 # app/authentication/crud.py
 from sqlalchemy.orm import Session
-from .. import models # Use relative import from parent package
+from typing import Optional
+from .. import models 
 
 def get_user_by_email(db: Session, email: str) -> models.User | None:
     """
@@ -29,15 +30,25 @@ def get_all_users(db: Session) -> list[models.User]:
     return db.query(models.User).all()
 
 
-def create_user(db: Session, name: str, email: str, hashed_password: str) -> models.User:
+def create_user(
+    db: Session, 
+    name: str, 
+    email: str, 
+    hashed_password: str,
+    tenant_id: Optional[int] = None,
+    role_id: Optional[int] = None
+) -> models.User:
     """
     Creates a new user and saves it to the database.
+    Now supports RBAC (role_id) and Multi-Tenancy (tenant_id).
 
     Args:
         db: The SQLAlchemy database session.
         name: The name of the user.
         email: The email of the user.
         hashed_password: The pre-hashed password for the user.
+        tenant_id: Optional ID for the tenant organization.
+        role_id: Optional ID for the user's role (admin/staff).
 
     Returns:
         The newly created User object.
@@ -45,7 +56,10 @@ def create_user(db: Session, name: str, email: str, hashed_password: str) -> mod
     db_user = models.User(
         name=name, 
         email=email, 
-        hashed_password=hashed_password
+        hashed_password=hashed_password,
+        # --- MAP NEW FIELDS ---
+        tenant_id=tenant_id,
+        role_id=role_id
     )
     db.add(db_user)
     db.commit()

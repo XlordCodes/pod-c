@@ -1,4 +1,4 @@
-# app/integrations/whatsappclient.py
+# app/integrations/whatsapp_client.py
 import requests
 import logging
 from app.core.config import settings

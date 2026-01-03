@@ -4,7 +4,7 @@ import logging
 from typing import List
 from sqlalchemy.orm import Session
 from app.models import ChatMessage
-from app.models_reply import ReplySuggestion
+from app.models import ReplySuggestion
 # Import the Vector Service for RAG (Retrieval Augmented Generation)
 from app.services.embedding_service import EmbeddingService
 from app.core.config import settings

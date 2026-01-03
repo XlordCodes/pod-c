@@ -4,7 +4,6 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from app.core.config import settings
 
 # Load database URL from centralized settings
-# We do not use os.getenv here anymore to ensure type safety.
 DATABASE_URL = settings.DATABASE_URL
 
 # Configure connection pooling to handle high throughput
@@ -14,8 +13,8 @@ engine = create_engine(
     DATABASE_URL, 
     echo=False, 
     future=True,
-    pool_size=20,
-    max_overflow=10
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW
 )
 
 # Create a configured "Session" class

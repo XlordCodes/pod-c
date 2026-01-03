@@ -3,7 +3,7 @@ import time
 import logging
 from sqlalchemy.orm import Session
 from app.models import BulkJob, BulkMessage
-from app.integrations.whatsappclient import send_template
+from app.integrations.whatsapp_client import send_template
 from tenacity import retry, wait_exponential, stop_after_attempt
 
 logger = logging.getLogger(__name__)

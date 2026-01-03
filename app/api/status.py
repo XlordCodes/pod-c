@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services.status_service import StatusService
-from app.models_status import MessageStatus
+from app.models import MessageStatus
 
 router = APIRouter(prefix="/status", tags=["Reliability/Dashboard"])
 

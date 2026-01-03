@@ -11,7 +11,7 @@ and handles idempotent updates (ignoring duplicates).
 import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from app.models_status import MessageStatus
+from app.models import MessageStatus
 from app.models import ChatMessage
 
 logger = logging.getLogger(__name__)
