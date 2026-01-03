@@ -10,12 +10,10 @@ It uses SQLAlchemy ORM to map Python classes to PostgreSQL tables.
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, JSON, ForeignKey, func
 )
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
-# A single, shared Base for all models in the application.
-# Extensions (like Vector/Status models) will import this Base.
-Base = declarative_base()
+from app.database import Base
 
 class User(Base):
     """
