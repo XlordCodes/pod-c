@@ -13,7 +13,7 @@ from app.database import get_db
 from app.services.status_service import StatusService
 from app.models import MessageStatus
 
-router = APIRouter(prefix="/status", tags=["Reliability/Dashboard"])
+router = APIRouter()
 
 @router.get("/summary")
 def status_summary(db: Session = Depends(get_db)):

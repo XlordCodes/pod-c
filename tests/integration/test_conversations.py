@@ -1,41 +1,19 @@
 # tests/integration/test_conversations.py
 import pytest
 import uuid
-import pytest_asyncio
 import hmac
 import hashlib
 import json
 from httpx import AsyncClient
 from app.core.config import settings
 
-# -----------------------------------------------------------------------------
-# FIXTURES
-# -----------------------------------------------------------------------------
-@pytest_asyncio.fixture
-async def auth_headers(client: AsyncClient):
-    """
-    Creates a dedicated 'Chat Admin' user and returns their auth token.
-    """
-    unique_email = f"chat_admin_{uuid.uuid4().hex[:6]}@ryze.com"
-    password = "securepass_chat"
-    
-    # Register
-    await client.post("/v1/auth/register", json={
-        "email": unique_email, "password": password, "name": "Chat Admin"
-    })
-    
-    # Login
-    res = await client.post("/v1/auth/token", data={
-        "username": unique_email, "password": password
-    })
-    
-    return {"Authorization": f"Bearer {res.json()['access_token']}"}
+# Mark all tests in this module as asyncio
+pytestmark = pytest.mark.asyncio
 
 # -----------------------------------------------------------------------------
 # TESTS
 # -----------------------------------------------------------------------------
 
-@pytest.mark.asyncio
 async def test_get_conversations_empty_initially(client: AsyncClient, auth_headers):
     """
     Verify that a new user sees an empty conversation list initially.
@@ -44,7 +22,6 @@ async def test_get_conversations_empty_initially(client: AsyncClient, auth_heade
     assert res.status_code == 200, f"Failed to list conversations: {res.text}"
     assert res.json() == []
 
-@pytest.mark.asyncio
 async def test_create_and_list_message(client: AsyncClient, auth_headers):
     """
     1. Create a Message via the Messages API.
@@ -57,14 +34,13 @@ async def test_create_and_list_message(client: AsyncClient, auth_headers):
         "text": "Hello, is this available?"
     }
     
-    # Path: /v1/api + /messages
+    # Path: /v1/api/messages
     res = await client.post("/v1/api/messages", json=payload, headers=auth_headers)
     assert res.status_code == 200, f"Message creation failed: {res.text}"
     msg_id = res.json()["id"]
 
     # 2. List Messages to confirm it appears
-    # FIX: Use 'params' dict so httpx encodes the '+' symbol correctly (%2B)
-    # Previous code sent raw '+', which server decodes as ' ' (space), causing mismatch.
+    # Note: Use 'params' dict so httpx encodes the '+' symbol correctly (%2B)
     list_res = await client.get(
         "/v1/api/messages", 
         params={"from_number": payload['from_number']}, 
@@ -77,7 +53,6 @@ async def test_create_and_list_message(client: AsyncClient, auth_headers):
     assert messages[0]["text"] == payload["text"]
     assert messages[0]["id"] == msg_id
 
-@pytest.mark.asyncio
 async def test_webhook_flow_creates_conversation(client: AsyncClient, auth_headers):
     """
     Integration: 
@@ -103,7 +78,7 @@ async def test_webhook_flow_creates_conversation(client: AsyncClient, auth_heade
         }]
     }
     
-    # Sign request
+    # Sign request (HMAC-SHA256)
     payload_bytes = json.dumps(webhook_payload).encode("utf-8")
     secret = settings.WHATSAPP_APP_SECRET.encode()
     signature = hmac.new(secret, payload_bytes, hashlib.sha256).hexdigest()
@@ -118,11 +93,12 @@ async def test_webhook_flow_creates_conversation(client: AsyncClient, auth_heade
     assert res.status_code == 200
 
     # 2. Verify Conversation Created
+    # Assuming chat_service creates a conversation accessible via this endpoint
     chat_res = await client.get("/v1/api/chat/conversations", headers=auth_headers)
     assert chat_res.status_code == 200
     
     conversations = chat_res.json()
-    my_convo = next((c for c in conversations if c["customer_number"] == customer_number), None)
+    my_convo = next((c for c in conversations if c.get("customer_number") == customer_number), None)
     
     assert my_convo is not None, "Webhook did not create a conversation!"
     
