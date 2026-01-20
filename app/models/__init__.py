@@ -1,26 +1,43 @@
+# app/models/__init__.py
+"""
+Module: Model Registry
+Context: Core Architecture
+
+Exports all models so Alembic can detect them for migrations.
+This file is the Single Source of Truth for the DB schema.
+"""
+
+# 1. Base
 from app.database import Base
 
-# 1. Auth & Core
+# 2. Auth & Core
 from .auth import User, Role
-from .audit import AuditLog
 
-# 2. CRM & Communication
-from .crm import Contact
+# 3. Audit & Activity (Pod B Module 3)
+# FIX: Added ActivityFeed here
+from .audit import AuditLog, ActivityFeed
+
+# 4. CRM & Communication (Pod A & Pod B Module 1)
+# FIX: Added Lead and Deal here
+from .crm import Contact, Lead, Deal
 from .chat import Message, Conversation, ChatMessage
 from .communication import BulkJob, BulkMessage, EmailQueue
 
-# 3. Extensions (Consolidated from separate files)
+# 5. Extensions
 from .extensions import MessageStatus, MessageEmbedding, ReplySuggestion
 
-# 4. New Pod B Domains (Finance & Inventory)
+# 6. Finance (Pod B Module 2)
 from .finance import Invoice, InvoiceItem, Payment, LedgerEntry
+
+# 7. Inventory (Pod B Module 5)
 from .inventory import Product, StockTransaction
 
 # Export for Alembic
 __all__ = [
     "Base",
-    "User", "Role", "AuditLog",
-    "Contact",
+    "User", "Role", 
+    "AuditLog", "ActivityFeed",
+    "Contact", "Lead", "Deal",
     "Message", "Conversation", "ChatMessage",
     "BulkJob", "BulkMessage", "EmailQueue",
     "MessageStatus", "MessageEmbedding", "ReplySuggestion",

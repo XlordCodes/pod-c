@@ -9,7 +9,7 @@ from app.models import Conversation, ChatMessage, User
 # Import the Auth Dependency to lock down the endpoints
 from app.authentication.router import get_current_user
 
-router = APIRouter(prefix="/chat", tags=["Chat/NLP"])
+router = APIRouter()
 
 @router.get("/conversations")
 def list_conversations(
@@ -25,7 +25,6 @@ def list_conversations(
     - **limit**: Maximum number of conversations to return (default 50).
     - **Requires**: Authentication.
     """
-    # Industry Standard: Always sort by latest activity so agents see new chats first
     conversations = (
         db.query(Conversation)
         .order_by(Conversation.last_message_at.desc())

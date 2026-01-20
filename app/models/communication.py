@@ -1,3 +1,4 @@
+# app/models/communication.py
 from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey, func
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -6,19 +7,21 @@ class BulkJob(Base):
     __tablename__ = "bulk_jobs"
 
     id = Column(Integer, primary_key=True, index=True)
+    
+    # --- ADDED FIELD ---
+    tenant_id = Column(Integer, index=True, nullable=False)
+
     template_name = Column(String, nullable=False)
     language_code = Column(String, default="en")
     
     # Status: 'queued', 'scheduled', 'processing', 'completed', 'failed'
     status = Column(String, default="queued")
     
-    # Scheduling (Module 2)
     scheduled_at = Column(DateTime(timezone=True), nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
     
-    # Helper for template vars (e.g. header images)
     components = Column(JSON, default=list)
 
     # Relationships
@@ -36,7 +39,6 @@ class BulkMessage(Base):
     status = Column(String, default="pending")
     whatsapp_message_id = Column(String, nullable=True)
     
-    # --- Reliability / Retry Fields (Module 6) ---
     attempts = Column(Integer, default=0)
     last_error = Column(Text, nullable=True)
     

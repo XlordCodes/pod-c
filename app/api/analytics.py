@@ -13,7 +13,7 @@ from app.reports.service_report import ReportService
 from app.models import User
 from app.authentication.router import get_current_user
 
-router = APIRouter(prefix="/analytics", tags=["Analytics & BI"])
+router = APIRouter()
 
 @router.get("/kpis")
 def get_kpis(

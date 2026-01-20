@@ -1,3 +1,4 @@
+# app/models/extensions.py
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -26,6 +27,13 @@ class MessageStatus(Base):
     # Optional field to store error codes/messages from WhatsApp for debugging.
     last_error = Column(String, nullable=True)
 
+    # --- ADDED RELATIONSHIP ---
+    # This matches: ChatMessage.statuses = relationship(..., back_populates="message")
+    message = relationship(
+        "app.models.chat.ChatMessage",
+        back_populates="statuses"
+    )
+
 
 class MessageEmbedding(Base):
     """
@@ -38,13 +46,11 @@ class MessageEmbedding(Base):
     message_id = Column(Integer, ForeignKey("chat_messages.id"), unique=True, nullable=False)
     
     # 1024 dimensions match the Cohere embed-english-v3.0 model
-    # If using OpenAI (text-embedding-3-small), use 1536.
     embedding = Column(Vector(1024)) 
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationship to the parent message
-    # Updated backref to point to the new location in app/models/chat.py
     message = relationship(
         "app.models.chat.ChatMessage", 
         back_populates="embedding_data"
@@ -64,3 +70,10 @@ class ReplySuggestion(Base):
     rank = Column(Integer)
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # --- ADDED RELATIONSHIP ---
+    # This matches: ChatMessage.suggestions = relationship(..., back_populates="message")
+    message = relationship(
+        "app.models.chat.ChatMessage",
+        back_populates="suggestions"
+    )

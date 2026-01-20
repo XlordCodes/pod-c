@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional
+# app/schemas/bulk.py
+from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 # ----------------------------
@@ -15,38 +16,39 @@ class BulkMessage(BulkMessageBase):
     attempts: int
     last_error: Optional[str] = None
 
-    class Config:
-        from_attributes = True # Replaces orm_mode
+    model_config = ConfigDict(from_attributes=True)
 
 # ----------------------------
 # BulkJob Schemas
 # ----------------------------
 
 class BulkJobCreate(BaseModel):
-    """Schema for creating a new job, matching the WhatsApp payload requirements."""
-    template_name: str = Field(..., description="The approved WhatsApp template name.")
-    language_code: str = Field("en_US", description="The language code (e.g., 'en_US', 'es').")
-    numbers: List[str] = Field(..., min_length=1, description="A list of 'to' numbers in E.164 format.")
-    # Parameters for variables (headers, body, buttons). Must be a valid Meta components structure.
-    components: Optional[List[dict]] = Field(None, description="Optional template parameters/components (e.g., {{1}} variable data).")
+    """Schema for creating a new job."""
+    template_name: str = Field(..., description="WhatsApp template name.")
+    language_code: str = Field("en_US", description="Language code.")
+    numbers: List[str] = Field(..., min_length=1, description="List of phone numbers.")
+    
+    scheduled_at: Optional[datetime] = Field(None, description="Schedule time.")
+    components: Optional[List[dict]] = Field(None, description="Template variables.")
 
 
 class BulkJobResponse(BaseModel):
     """Schema for the response after creating a job."""
     id: int
+    tenant_id: int          # <--- ADDED (Matches DB)
     template_name: str
     language_code: str
     components: Optional[List[dict]] = None
     status: str
     created_at: datetime
-    numbers: List[str]
+    
+    model_config = ConfigDict(from_attributes=True)
 
 class BulkJobStatus(BaseModel):
-    """Schema for checking a job's status."""
+    """Schema for checking status."""
     id: int
     status: str
     created_at: datetime
     messages: List[BulkMessage]
 
-    class Config:
-        from_attributes = True # Replaces orm_mode
+    model_config = ConfigDict(from_attributes=True)

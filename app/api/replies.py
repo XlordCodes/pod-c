@@ -15,7 +15,7 @@ from app.services.sentiment_service import SentimentService
 from app.services.reply_service import ReplyService
 from app.models import ChatMessage
 
-router = APIRouter(prefix="/ai", tags=["AI/Replies"])
+router = APIRouter()
 
 @router.post("/sentiment/{message_id}")
 def tag_sentiment(message_id: int, db: Session = Depends(get_db)):

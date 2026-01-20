@@ -16,7 +16,7 @@ from app.services.embedding_service import EmbeddingService
 from app.services.summary_service import SummaryService
 from app.models import ChatMessage
 
-router = APIRouter(prefix="/vector", tags=["AI/Vector"])
+router = APIRouter()
 
 @router.post("/embed-message")
 def embed_message(message_id: int, db: Session = Depends(get_db)):
