@@ -1,10 +1,18 @@
 # app/tasks/retry_tasks.py
+"""
+Module: Retry Worker
+Context: Pod C - Async Infrastructure
+
+A dedicated periodic task that acts as a 'Dead Letter Queue' processor.
+It scans for messages stuck in 'failed' state and retries them automatically.
+"""
+
 import logging
 from sqlalchemy.orm import joinedload
 from app.core.celery_app import celery_app
 from app.database import SessionLocal
-from app.models import BulkMessage, BulkJob
-from app.integrations.whatsapp_client import send_template
+from app.models.bulk import BulkMessage
+from app.integrations.whatsapp_client import whatsapp_client
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +23,6 @@ MAX_RETRIES = 3
 def retry_failed_bulk_messages():
     """
     Periodic Task: Scans for failed bulk messages and retries them.
-    Acts as a 'Dead Letter Queue' processor for transient failures.
     """
     db = SessionLocal()
     try:
@@ -50,7 +57,8 @@ def retry_failed_bulk_messages():
                 # We interpret the existing error as transient and try again.
                 logger.info(f"Retrying Message {msg.id} to {msg.to_number} (Attempt {msg.attempts + 1})")
                 
-                resp = send_template(
+                # Using the Sync client (safe for Celery)
+                response = whatsapp_client.send_template_sync(
                     to_number=msg.to_number,
                     template_name=job.template_name,
                     language=job.language_code,
@@ -59,8 +67,12 @@ def retry_failed_bulk_messages():
                 
                 # 3. Success Path
                 msg.status = "sent"
-                # Store the new WhatsApp ID so we can track the new status
-                msg.whatsapp_message_id = resp.get("messages", [{}])[0].get("id")
+                
+                # Extract the new WAMID from the response if available
+                # Response format: {'messages': [{'id': 'wamid.HBg...'}]}
+                if response and "messages" in response:
+                     msg.whatsapp_message_id = response["messages"][0].get("id")
+
                 msg.last_error = None # Clear error
                 msg.attempts += 1
                 success_count += 1
@@ -69,6 +81,7 @@ def retry_failed_bulk_messages():
                 # 4. Failure Path
                 msg.attempts += 1
                 msg.last_error = f"Retry Error: {str(e)}"
+                
                 # If max reached, it stays 'failed' permanently (Dead Letter)
                 if msg.attempts >= MAX_RETRIES:
                     logger.error(f"Message {msg.id} permanently failed after {MAX_RETRIES} attempts.")

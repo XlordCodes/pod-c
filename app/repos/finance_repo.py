@@ -12,18 +12,29 @@ from decimal import Decimal
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
 
-# Import from the NEW modular structure
 from app.models.finance import Invoice, InvoiceItem, Payment, LedgerEntry
 from app.schemas.finance import InvoiceCreate, PaymentCreate
 
 class FinanceRepo:
+    """
+    Repository for managing Finance data.
+    """
     def __init__(self, db: Session):
         self.db = db
 
     def create_invoice(self, tenant_id: int, schema: InvoiceCreate, total_amount: Decimal) -> Invoice:
         """
-        Creates an Invoice and its Line Items in a single transaction.
-        The 'total_amount' is calculated by the Service layer before calling this.
+        Creates an Invoice and its Line Items.
+        
+        Args:
+            tenant_id (int): Context tenant.
+            schema (InvoiceCreate): Validated request data.
+            total_amount (Decimal): Pre-calculated total from Service layer.
+            
+        Returns:
+            Invoice: The created invoice with items attached.
+            
+        Note: Does NOT commit. Uses flush() to generate IDs.
         """
         # 1. Create the parent Invoice
         db_invoice = Invoice(
@@ -35,7 +46,9 @@ class FinanceRepo:
             status="draft"
         )
         self.db.add(db_invoice)
-        self.db.flush() # Flush to generate db_invoice.id for the items
+        
+        # [CRITICAL] Flush to generate db_invoice.id for the items
+        self.db.flush() 
 
         # 2. Create the child Items
         for item in schema.items:
@@ -47,8 +60,7 @@ class FinanceRepo:
             )
             self.db.add(db_item)
 
-        self.db.commit()
-        self.db.refresh(db_invoice)
+        # No commit here. Service layer must handle the transaction boundary.
         return db_invoice
 
     def get_invoice(self, invoice_id: int, tenant_id: int) -> Optional[Invoice]:
@@ -89,19 +101,17 @@ class FinanceRepo:
             reference_id=schema.reference_id
         )
         self.db.add(payment)
-        self.db.commit()
-        self.db.refresh(payment)
+        self.db.flush() # Generate ID
         return payment
 
-    def update_status(self, invoice_id: int, new_status: str) -> Invoice:
+    def update_status(self, invoice_id: int, new_status: str) -> Optional[Invoice]:
         """
         Updates the status of an invoice (e.g., 'draft' -> 'paid').
         """
         invoice = self.db.query(Invoice).filter(Invoice.id == invoice_id).first()
         if invoice:
             invoice.status = new_status
-            self.db.commit()
-            self.db.refresh(invoice)
+            self.db.flush() # Persist change to session, but don't commit yet
         return invoice
 
     def add_ledger_entry(self, 
@@ -123,6 +133,5 @@ class FinanceRepo:
             reference_id=ref_id
         )
         self.db.add(entry)
-        self.db.commit()
-        self.db.refresh(entry)
+        self.db.flush()
         return entry

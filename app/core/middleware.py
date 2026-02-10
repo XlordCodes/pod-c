@@ -4,7 +4,7 @@ import uuid
 import logging
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from app.core.context import set_request_id, set_user_id
+from app.core.context import set_request_id, set_user_id, set_tenant_id
 from jose import jwt, JWTError
 from app.core.config import settings
 
@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """
-    1. Generates a unique Trace ID (X-Request-ID) for every request.
-    2. Extracts User ID from JWT (if present) for Audit Context.
+    1. Generates a unique Trace ID (X-Request-ID).
+    2. Extracts User ID and Tenant ID from JWT (if present) for Audit/RLS Context.
     3. Logs request timing and status.
     """
     async def dispatch(self, request: Request, call_next):
@@ -23,20 +23,31 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         trace_id = str(uuid.uuid4())
         set_request_id(trace_id)
         
-        # 2. Try to set User ID context (Best effort for Audit Logs)
-        # We don't fail here if auth fails; the Auth Router handles enforcement.
+        # 2. Extract Context from Auth Header
+        # We process this here so the Database session can pick it up immediately.
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
             try:
                 token = auth_header.split(" ")[1]
                 payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-                email = payload.get("sub")
-                # Note: To get the numeric ID, we'd need a DB call or store it in JWT.
-                # For efficiency, we skip the DB call here. Real User ID is handled 
-                # in dependencies. We set a marker or None.
-                # Ideally, put user_id in JWT payload to avoid DB hits here.
-                pass 
+                
+                # Extract User ID
+                user_id = payload.get("id")
+                if user_id:
+                    try:
+                        set_user_id(int(user_id))
+                    except (ValueError, TypeError):
+                        pass
+
+                tenant_id = payload.get("tenant_id")
+                if tenant_id:
+                    try:
+                        set_tenant_id(int(tenant_id))
+                    except (ValueError, TypeError):
+                        pass
+
             except JWTError:
+                # Auth errors are handled by the APIRouter dependencies, not here.
                 pass
 
         # 3. Process Request

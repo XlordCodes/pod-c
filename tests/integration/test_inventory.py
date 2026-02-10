@@ -1,15 +1,3 @@
-# tests/integration/test_inventory.py
-"""
-Module: Inventory Integration Tests
-Context: Pod B - Module 5 (Workflow & Inventory)
-
-Tests the full lifecycle of inventory management:
-1. Product Creation (RBAC protected)
-2. Stock Adjustments (Atomic transactions)
-3. Business Logic (Negative stock prevention)
-4. Tenant Isolation (Implicit via Service)
-"""
-
 import pytest
 import uuid
 from httpx import AsyncClient
@@ -17,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.auth import User, Role
 from app.models.inventory import Product, StockTransaction
+# Remove SessionLocal import; we must use the fixture's session
 
 # Mark all tests in this module as asyncio
 pytestmark = pytest.mark.asyncio
@@ -39,18 +28,14 @@ async def setup_admin_role(db: Session, user_email: str):
         user.role_id = admin_role.id
         db.add(user)
         db.commit()
+        db.refresh(user)
 
-async def test_inventory_lifecycle(client: AsyncClient, db_session: Session, auth_headers: dict):
+async def test_inventory_lifecycle(client: AsyncClient, db_session: Session, auth_headers: dict, test_user):
     """
     Test the complete flow: Create Product -> Add Stock -> Remove Stock -> Fail on Negative.
     """
     # --- SETUP: Promote User to Admin ---
-    # We need to extract email from the auth setup or just pick the user created by the fixture.
-    # Assuming auth_headers comes from a user like "test@example.com" or we fetch the user id 1.
-    # For robustness, we'll grab the user associated with the token or just the first user.
-    user = db_session.query(User).first()
-    assert user is not None, "Test user not found in DB"
-    await setup_admin_role(db_session, user.email)
+    await setup_admin_role(db_session, test_user.email)
 
     # --- STEP 1: Create Product ---
     sku = f"TEST-SKU-{uuid.uuid4().hex[:6]}"
@@ -82,6 +67,7 @@ async def test_inventory_lifecycle(client: AsyncClient, db_session: Session, aut
     assert res.json()["stock"] == 10
 
     # Verify Transaction Log in DB
+    # Use db_session directly; creating a new SessionLocal() would fail to see the uncommitted nested transaction data
     txn = db_session.query(StockTransaction).filter(
         StockTransaction.product_id == product_id,
         StockTransaction.qty_change == 10
@@ -109,10 +95,12 @@ async def test_inventory_lifecycle(client: AsyncClient, db_session: Session, aut
     assert res.status_code == 400
     assert "Insufficient stock" in res.text
 
-    # Verify stock didn't change
-    db_session.refresh(txn) # Refresh session to be safe
+    # VERIFICATION
+    db_session.expire_all()
+
     prod = db_session.query(Product).filter(Product.id == product_id).first()
-    assert prod.stock == 7
+    assert prod is not None, "Product should still exist"
+    assert prod.stock == 7  # Should remain 7
 
 async def test_unauthorized_access(client: AsyncClient, db_session: Session, auth_headers: dict):
     """

@@ -1,9 +1,9 @@
 # app/authentication/crud.py
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from .. import models 
 
-def get_user_by_email(db: Session, email: str) -> models.User | None:
+def get_user_by_email(db: Session, email: str) -> Optional[models.User]:
     """
     Fetches a single user from the database by their email address.
 
@@ -17,7 +17,7 @@ def get_user_by_email(db: Session, email: str) -> models.User | None:
     return db.query(models.User).filter(models.User.email == email).first()
 
 
-def get_all_users(db: Session) -> list[models.User]:
+def get_all_users(db: Session) -> List[models.User]:
     """
     Fetches all users from the database.
 
@@ -39,8 +39,10 @@ def create_user(
     role_id: Optional[int] = None
 ) -> models.User:
     """
-    Creates a new user and saves it to the database.
-    Now supports RBAC (role_id) and Multi-Tenancy (tenant_id).
+    Creates a new user instance and adds it to the session.
+    
+    CRITICAL: This function performs a 'flush' to generate the ID but does NOT commit.
+    The caller (Service/Router) is responsible for the final db.commit().
 
     Args:
         db: The SQLAlchemy database session.
@@ -51,7 +53,7 @@ def create_user(
         role_id: Optional ID for the user's role (admin/staff).
 
     Returns:
-        The newly created User object.
+        The newly created User object (with populated ID).
     """
     db_user = models.User(
         name=name, 
@@ -62,6 +64,10 @@ def create_user(
         role_id=role_id
     )
     db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
+    
+    # Flush sends the SQL INSERT to the transaction buffer.
+    # This populates db_user.id and checks Unique Constraints (email).
+    # If this fails, the caller can catch the error and rollback.
+    db.flush()
+    
     return db_user

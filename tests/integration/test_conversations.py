@@ -36,7 +36,7 @@ async def test_create_and_list_message(client: AsyncClient, auth_headers):
     
     # Path: /v1/api/messages
     res = await client.post("/v1/api/messages", json=payload, headers=auth_headers)
-    assert res.status_code == 200, f"Message creation failed: {res.text}"
+    assert res.status_code == 201, f"Message creation failed: {res.text}"
     msg_id = res.json()["id"]
 
     # 2. List Messages to confirm it appears

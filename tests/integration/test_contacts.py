@@ -25,35 +25,40 @@ async def test_create_contact_success(client: AsyncClient, auth_headers):
     # Path: /v1/api/contacts (Matches router.py structure)
     res = await client.post("/v1/api/contacts", json=payload, headers=auth_headers)
     
-    assert res.status_code == 200, f"Failed: {res.text}"
+    # FIX: Router returns 201 Created
+    assert res.status_code == 201, f"Failed: {res.text}"
+    
     data = res.json()
     assert data["name"] == payload["name"]
     assert data["id"] is not None
-    # Verify custom fields were saved
+    
+    # Verify custom fields were saved and returned as dict
     assert data["custom_fields"] == {"segment": "vip"}
 
 async def test_create_duplicate_phone_fails(client: AsyncClient, auth_headers):
     """
     Edge Case: The system must reject duplicate phone numbers.
     """
+    # Use a unique phone number for this test run
     phone = f"+91{uuid.uuid4().int}"[:13]
     
     payload_1 = {"name": "User One", "phone": phone}
     payload_2 = {"name": "User Two", "phone": phone}
 
-    # First creation -> Success
+    # First creation -> Success (201)
     res1 = await client.post("/v1/api/contacts", json=payload_1, headers=auth_headers)
-    assert res1.status_code == 200
+    assert res1.status_code == 201
 
-    # Second creation -> Should Fail (400 Bad Request or 409 Conflict)
+    # Second creation -> Should Fail (400 Bad Request)
     res2 = await client.post("/v1/api/contacts", json=payload_2, headers=auth_headers)
-    assert res2.status_code in [400, 409]
+    assert res2.status_code == 400
+    assert "already exists" in res2.text or "integrity error" in res2.text.lower()
 
 async def test_get_contacts_pagination(client: AsyncClient, auth_headers):
     """
     Performance: Ensure listing contacts supports pagination.
     """
-    # Create at least one contact to ensure list isn't empty (optional but good practice)
+    # Create at least one contact to ensure list isn't empty
     await client.post("/v1/api/contacts", json={"name": "Pagination Test"}, headers=auth_headers)
 
     res = await client.get("/v1/api/contacts?skip=0&limit=5", headers=auth_headers)
@@ -78,6 +83,7 @@ async def test_update_contact(client: AsyncClient, auth_headers):
     
     assert update_res.status_code == 200
     assert update_res.json()["name"] == "New Name"
+    # Ensure other fields remain unchanged
     assert update_res.json()["phone"] == phone
 
 async def test_delete_contact(client: AsyncClient, auth_headers):

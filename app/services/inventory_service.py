@@ -20,6 +20,7 @@ import logging
 from typing import List, Optional
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.repos.inventory_repo import InventoryRepo
 from app.services.audit_service import AuditService
@@ -27,7 +28,7 @@ from app.schemas.inventory import ProductCreate, StockAdjustment
 from app.models.inventory import Product
 
 # Event Bus Imports
-from app.core.event_bus import event_bus, get_main_loop # <--- Helper imported here
+from app.core.event_bus import event_bus, get_main_loop
 from app.events.inventory_events import LowStockEvent, StockAdjustedEvent
 
 logger = logging.getLogger(__name__)
@@ -63,38 +64,55 @@ class InventoryService:
                     loop.create_task(event_bus.publish(event))
                 except RuntimeError:
                     # No loop at all (common in some synchronous test runners)
-                    logger.warning(f"⚠️ Could not publish event {type(event).__name__}: No event loop found.")
+                    logger.warning(f"Could not publish event {type(event).__name__}: No event loop found.")
 
         except Exception as e:
-            # Critical: Event failure should NOT rollback the DB transaction
-            logger.error(f"❌ Failed to publish event {type(event).__name__}: {e}")
+            # Event failure should NOT rollback the DB transaction
+            logger.error(f"Failed to publish event {type(event).__name__}: {e}")
 
     def create_product(self, tenant_id: int, schema: ProductCreate, user_id: Optional[int] = None) -> Product:
         """
         Creates a new product in the catalog.
+        Wraps creation and audit logging in a single atomic transaction.
         """
-        # 1. Duplicate Check
-        existing = self.repo.get_product_by_sku(tenant_id, schema.sku)
-        if existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, 
-                detail=f"Product with SKU '{schema.sku}' already exists."
-            )
-        
-        # 2. Create Product (DB)
-        product = self.repo.create_product(tenant_id, schema)
+        try:
+            # 1. Duplicate Check
+            existing = self.repo.get_product_by_sku(tenant_id, schema.sku)
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, 
+                    detail=f"Product with SKU '{schema.sku}' already exists."
+                )
+            
+            # 2. Create Product (DB) - No commit here, just flush
+            product = self.repo.create_product(tenant_id, schema)
 
-        # 3. Audit Log
-        # FIX: Added mode='json' to prevent "Object of type Decimal is not JSON serializable"
-        self.audit.log_event(
-            actor_id=user_id,
-            entity="Product",
-            entity_id=product.id,
-            action="create",
-            changes=schema.model_dump(mode='json') 
-        )
-        
-        return product
+            # 3. Audit Log
+            self.audit.log_event(
+                actor_id=user_id,
+                entity="Product",
+                entity_id=product.id,
+                action="create",
+                changes=schema.model_dump(mode='json') 
+            )
+            
+            # 4. Commit Transaction
+            self.db.commit()
+            self.db.refresh(product)
+            
+            return product
+            
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Database error creating product: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error")
+        except HTTPException:
+            self.db.rollback()
+            raise
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Unexpected error creating product: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unexpected system error")
 
     def get_product(self, tenant_id: int, product_id: int) -> Product:
         product = self.repo.get_product(tenant_id, product_id)
@@ -118,68 +136,84 @@ class InventoryService:
         """
         Moves stock IN/OUT.
         Triggers: Audit Log, StockAdjustedEvent, LowStockEvent.
+        
+        CRITICAL: Uses row locking (SELECT FOR UPDATE) to prevent race conditions
+        during high-concurrency stock updates.
         """
-        # 1. Fetch Product
-        product = self.repo.get_product(tenant_id, product_id)
-        if not product:
-            raise HTTPException(status_code=404, detail="Product not found")
+        try:
+            # 1. Fetch Product with Write Lock
+            # This ensures no other transaction can modify this product until we commit.
+            product = self.repo.get_product_for_update(tenant_id, product_id)
+            if not product:
+                raise HTTPException(status_code=404, detail="Product not found")
 
-        # 2. Business Rule: Prevent negative stock
-        new_level = product.stock + adjustment.qty
-        if new_level < 0:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Insufficient stock. Current: {product.stock}, Requested: {abs(adjustment.qty)}"
+            # 2. Business Rule: Prevent negative stock
+            new_level = product.stock + adjustment.qty
+            if new_level < 0:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Insufficient stock. Current: {product.stock}, Requested: {abs(adjustment.qty)}"
+                )
+
+            # 3. Execute Transaction (Atomic Update)
+            self.repo.create_transaction(
+                product=product,
+                change=adjustment.qty,
+                reason=adjustment.reason,
+                ref_id=adjustment.reference_id
             )
+            
+            # 4. Audit Log
+            self.audit.log_event(
+                actor_id=user_id,
+                entity="Product",
+                entity_id=product.id,
+                action="adjust_stock",
+                changes={
+                    "change": adjustment.qty,
+                    "reason": adjustment.reason,
+                    "new_stock": new_level
+                }
+            )
+            
+            # 5. Commit Atomic Transaction
+            self.db.commit()
+            self.db.refresh(product)
 
-        # 3. Execute Transaction (Atomic Update)
-        self.repo.create_transaction(
-            product=product,
-            change=adjustment.qty,
-            reason=adjustment.reason,
-            ref_id=adjustment.reference_id
-        )
-        
-        # 4. Audit Log
-        self.audit.log_event(
-            actor_id=user_id,
-            entity="Product",
-            entity_id=product.id,
-            action="adjust_stock",
-            changes={
-                "change": adjustment.qty,
-                "reason": adjustment.reason,
-                "new_stock": new_level
-                # Note: If new_level was a Decimal, we would need to cast it here.
-                # Integer arithmetic usually remains Integer in Python.
-            }
-        )
-        
-        # 5. Refresh to get final state
-        self.db.refresh(product)
-
-        # --- EVENT PUBLISHING (After successful DB commit) ---
-        
-        # Event A: General Stock Change
-        self._publish_event_safe(StockAdjustedEvent(
-            tenant_id=tenant_id,
-            product_id=product.id,
-            sku=product.sku,
-            qty_change=adjustment.qty,
-            new_stock=new_level,
-            reason=adjustment.reason,
-            actor_id=user_id
-        ))
-
-        # Event B: Low Stock Warning
-        if new_level <= product.reorder_point:
-            self._publish_event_safe(LowStockEvent(
+            # 6. Publish Events (Fire-and-Forget AFTER successful commit)
+            
+            # Event A: General Stock Change
+            self._publish_event_safe(StockAdjustedEvent(
                 tenant_id=tenant_id,
                 product_id=product.id,
                 sku=product.sku,
-                product_name=product.name,
-                current_stock=new_level,
-                reorder_point=product.reorder_point
+                qty_change=adjustment.qty,
+                new_stock=new_level,
+                reason=adjustment.reason,
+                actor_id=user_id
             ))
-        
-        return product
+
+            # Event B: Low Stock Warning
+            if new_level <= product.reorder_point:
+                self._publish_event_safe(LowStockEvent(
+                    tenant_id=tenant_id,
+                    product_id=product.id,
+                    sku=product.sku,
+                    product_name=product.name,
+                    current_stock=new_level,
+                    reorder_point=product.reorder_point
+                ))
+            
+            return product
+
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Database error adjusting stock: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database transaction failed")
+        except HTTPException:
+            self.db.rollback()
+            raise
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Unexpected error adjusting stock: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unexpected system error")

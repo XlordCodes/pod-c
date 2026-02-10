@@ -8,9 +8,13 @@ Includes:
 - Contact: Established customers (Pod A legacy support).
 - Lead: Potential customers (Module 1).
 - Deal: Sales opportunities linked to Leads (Module 1).
+
+Security Note:
+- Uses app.core.security for Field-Level Encryption (national_id).
+- Enforces strict Multi-Tenant isolation via UniqueConstraints.
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, func
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, func, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from app.database import Base
@@ -27,13 +31,15 @@ class Contact(Base):
     tenant_id = Column(Integer, index=True, nullable=True) # Logical isolation
     
     name = Column(String, nullable=False)
-    email = Column(String, nullable=True, unique=True, index=True)
-    phone = Column(String, nullable=True, unique=True, index=True)
+    
+    # Use UniqueConstraint in __table_args__ for tenant-scoped uniqueness.
+    email = Column(String, nullable=True, index=True)
+    phone = Column(String, nullable=True, index=True)
     
     # Stores dynamic attributes like 'segment', 'source', 'preferences'
     custom_fields = Column(JSON, default={}) 
 
-    # Module 5: Encrypted Field
+    # The database stores the encrypted string, but Python sees the plain text.
     _national_id = Column("national_id", String, nullable=True)
 
     @property
@@ -67,6 +73,12 @@ class Contact(Base):
     invoices = relationship(
         "app.models.finance.Invoice",
         back_populates="contact"
+    )
+
+    # Ensures email/phone are unique ONLY within a specific tenant.
+    __table_args__ = (
+        UniqueConstraint('tenant_id', 'email', name='uq_contact_tenant_email'),
+        UniqueConstraint('tenant_id', 'phone', name='uq_contact_tenant_phone'),
     )
 
 

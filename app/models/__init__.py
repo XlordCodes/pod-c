@@ -14,14 +14,12 @@ from app.database import Base
 from .auth import User, Role
 
 # 3. Audit & Activity (Pod B Module 3)
-# FIX: Added ActivityFeed here
 from .audit import AuditLog, ActivityFeed
 
 # 4. CRM & Communication (Pod A & Pod B Module 1)
-# FIX: Added Lead and Deal here
 from .crm import Contact, Lead, Deal
 from .chat import Message, Conversation, ChatMessage
-from .communication import BulkJob, BulkMessage, EmailQueue
+from .bulk import BulkJob, BulkMessage, EmailQueue
 
 # 5. Extensions
 from .extensions import MessageStatus, MessageEmbedding, ReplySuggestion

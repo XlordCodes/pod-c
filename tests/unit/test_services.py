@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 from app.services.email_service import Emailer
 from app.api.emailer import send_email_handler, EmailPayload
-
-from app.integrations.whatsapp_client import send_template
+from app.integrations.whatsapp_client import whatsapp_client
 
 # --- 1. Test the API Handler (Queuing Logic) ---
 def test_email_handler_queues_job(mocker):
@@ -77,6 +76,16 @@ def test_emailer_sends_via_sendgrid(mocker):
     
     # 2. Mock SendGrid Client
     mock_sg_client = mocker.Mock()
+    
+    # If we don't do this, the retry logic thinks it failed and loops until crash.
+    mock_response = mocker.Mock()
+    mock_response.status_code = 202
+    mock_response.body = b"Accepted"
+    mock_response.headers = {}
+    
+    mock_sg_client.send.return_value = mock_response
+    # --- FIX END ---
+
     mocker.patch("app.services.email_service.sendgrid.SendGridAPIClient", return_value=mock_sg_client)
     
     # 3. Mock Jinja2 Environment
@@ -105,7 +114,7 @@ def test_emailer_sends_via_sendgrid(mocker):
     mock_sg_client.send.assert_called_once()
 
 
-# --- 3. WhatsApp Tests (Existing) ---
+# --- 3. WhatsApp Tests ---
 def test_whatsapp_send_success(mocker):
     """
     Test the WhatsApp client wrapper.
@@ -115,7 +124,8 @@ def test_whatsapp_send_success(mocker):
     mock_resp.status_code = 200
     mock_resp.raise_for_status.return_value = None
     
-    mocker.patch("app.integrations.whatsapp_client.requests.post", return_value=mock_resp)
+    mocker.patch("app.integrations.whatsapp_client.requests.post", return_value=mock_resp)    
+    result = whatsapp_client.send_template_sync("9199999999", "hello_world_template")
     
-    result = send_template("9199999999", "hello_world_template")
+    # 4. Verify response
     assert result["messages"][0]["id"] == "wamid.123"

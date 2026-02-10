@@ -42,8 +42,10 @@ class InventoryRepo:
             reorder_point=schema.reorder_point
         )
         self.db.add(product)
-        self.db.commit()
-        self.db.refresh(product)
+        
+        # Using flush ensures the ID is generated for downstream use (like Audit logs) 
+        # while keeping the transaction open.
+        self.db.flush() 
         return product
 
     def get_product(self, tenant_id: int, product_id: int) -> Optional[Product]:
@@ -53,6 +55,27 @@ class InventoryRepo:
         return (
             self.db.query(Product)
             .filter(Product.id == product_id, Product.tenant_id == tenant_id)
+            .first()
+        )
+
+    def get_product_for_update(self, tenant_id: int, product_id: int) -> Optional[Product]:
+        """
+        Retrieves and LOCKS a product row for atomic updates.
+        
+        Uses 'SELECT ... FOR UPDATE' to prevent race conditions.
+        If another transaction holds the lock, this will wait until it releases.
+        
+        Args:
+            tenant_id (int): Context tenant.
+            product_id (int): Product to lock.
+            
+        Returns:
+            Optional[Product]: The locked product instance.
+        """
+        return (
+            self.db.query(Product)
+            .filter(Product.id == product_id, Product.tenant_id == tenant_id)
+            .with_for_update()
             .first()
         )
     
@@ -109,10 +132,11 @@ class InventoryRepo:
         self.db.add(txn)
         
         # 2. Update Stock Level on the Product Model
-        # This acts as a cache/snapshot for fast reads
+        # This acts as a cache/snapshot for fast reads.
+        # Note: The 'product' row MUST be locked via get_product_for_update() 
+        # before calling this to ensure safety.
         product.stock += change
         
-        # 3. Commit both changes in a single atomic transaction
-        self.db.commit()
-        self.db.refresh(txn)
+        # The Service layer must commit the transaction.
+        self.db.flush()
         return txn

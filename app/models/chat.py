@@ -4,8 +4,6 @@ from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from app.database import Base
 
-# NOTE: Do NOT import other models here (like MessageEmbedding) to avoid circular imports.
-# Use string references in relationship() calls instead.
 
 class Message(Base):
     """
@@ -75,6 +73,8 @@ class ChatMessage(Base):
     from_number = Column(String)
     text = Column(Text)
     
+    message_type = Column(String, default="text") 
+    
     # NLP Metadata (populated by SimpleNLPService & SentimentService)
     language = Column(String, default="unknown")
     intent = Column(String, default="unclassified")
@@ -85,7 +85,6 @@ class ChatMessage(Base):
     # --- Relationships ---
     
     # 1. Vector Embeddings (One-to-One)
-    # Defined in app/models/extensions.py
     embedding_data = relationship(
         "app.models.extensions.MessageEmbedding", 
         back_populates="message", 
@@ -93,8 +92,7 @@ class ChatMessage(Base):
         cascade="all, delete-orphan"
     )
 
-    # 2. Delivery Status (One-to-Many, usually just one current status)
-    # Defined in app/models/extensions.py
+    # 2. Delivery Status (One-to-Many)
     statuses = relationship(
         "app.models.extensions.MessageStatus",
         back_populates="message",
@@ -102,7 +100,6 @@ class ChatMessage(Base):
     )
 
     # 3. AI Reply Suggestions (One-to-Many)
-    # Defined in app/models/extensions.py
     suggestions = relationship(
         "app.models.extensions.ReplySuggestion",
         back_populates="message",

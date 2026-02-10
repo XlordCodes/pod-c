@@ -1,59 +1,62 @@
 # app/api/whatsapp.py
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Optional
-import httpx
-from app.core.config import settings
+"""
+Module: WhatsApp API
+Context: Pod C - Integrations
+
+Exposes endpoints to send WhatsApp messages.
+Delegates actual transmission logic to the robust 'whatsapp_client'.
+"""
+
+import logging
+from typing import Optional, List, Any
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, Field
+
+# Import the unified client we just created
+from app.integrations.whatsapp_client import whatsapp_client
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 class WhatsAppTemplateSendIn(BaseModel):
-    to: str  # WhatsApp number as string, e.g., '919876543210'
-    template_name: str  # WhatsApp approved template name
-    language_code: Optional[str] = "en_US"  # or your default
-    parameters: Optional[list] = None  # Text parameters for the template
+    """
+    Request schema for sending a template message.
+    """
+    to: str = Field(..., description="Target WhatsApp number (e.g., '15550123456')")
+    template_name: str = Field(..., description="The approved template name (e.g., 'hello_world')")
+    language_code: str = Field(default="en_US", description="Template language code")
+    
+    # Flexible list for template variables (text, currency, etc.)
+    parameters: Optional[List[Any]] = Field(default=None, description="List of variable values for the template body")
 
-@router.post("/whatsapp/send-template")
+@router.post("/whatsapp/send-template", status_code=status.HTTP_200_OK)
 async def send_whatsapp_template(payload: WhatsAppTemplateSendIn):
     """
-    Sends a WhatsApp template message using credentials from settings.
+    Sends a WhatsApp template message.
+    
+    Uses the asynchronous WhatsApp client to ensure non-blocking I/O
+    and automatic retries for transient network failures.
     """
-    # Validate credentials from settings
-    access_token = settings.WHATSAPP_TOKEN
-    phone_number_id = settings.WHATSAPP_PHONE_NUMBER_ID
-    
-    if not access_token or not phone_number_id:
-        raise HTTPException(status_code=500, detail="Missing WhatsApp credentials in configuration.")
-
-    url = (
-        f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
-    )
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-    }
-    components = []
-    if payload.parameters:
-        components = [
-            {
-                "type": "body",
-                "parameters": [{"type": "text", "text": str(p)} for p in payload.parameters],
-            }
-        ]
-    data = {
-        "messaging_product": "whatsapp",
-        "to": payload.to,
-        "type": "template",
-        "template": {
-            "name": payload.template_name,
-            "language": {"code": payload.language_code},
-            "components": components,
-        },
-    }
-    
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(url, headers=headers, json=data)
-    
-    if resp.status_code != 200:
-        raise HTTPException(status_code=resp.status_code, detail=resp.json())
-    return {"status": "sent", "whatsapp_response": resp.json()}
+    try:
+        # Delegate to the integration client
+        # Note: The client handles authentication and URL construction
+        response = await whatsapp_client.send_template_async(
+            to_number=payload.to,
+            template_name=payload.template_name,
+            language=payload.language_code,
+            components=payload.parameters
+        )
+        
+        return {
+            "status": "sent", 
+            "provider_response": response
+        }
+        
+    except Exception as e:
+        logger.error(f"WhatsApp API Error: {str(e)}")
+        # Raise 500 but include the error message for debugging 
+        # (In strict prod, mask this)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=f"Failed to send message: {str(e)}"
+        )

@@ -1,52 +1,45 @@
 # app/authentication/schemas.py
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from datetime import datetime
 from typing import Optional
 
-# =================================
-#       USER SCHEMAS
-# =================================
-
-# --- User Base Schema ---
-# Shared properties for a user.
 class UserBase(BaseModel):
+    """
+    Shared properties for user input/output.
+    """
     email: EmailStr
     name: Optional[str] = None
 
-# --- User Create Schema ---
-# Properties required when creating a new user (e.g., via /register).
-# Inherits from UserBase and adds the password.
 class UserCreate(UserBase):
+    """
+    Payload for registering a new user.
+    """
     password: str
-    # Optional: Allow setting tenant_id/role_id during creation for testing/admin
-    tenant_id: Optional[int] = 1 
+    # The system must explicitly derive or request the tenant context.
+    tenant_id: Optional[int] = None
     role_id: Optional[int] = None
 
-# --- User Schema ---
-# Properties to be returned from the API when fetching a user.
-# IMPORTANT: It does NOT include the password for security.
 class User(UserBase):
+    """
+    Public User profile (excludes password).
+    """
     id: int
     created_at: datetime
     tenant_id: Optional[int] = None
     role_id: Optional[int] = None
 
-    class Config:
-        # This allows Pydantic to read the data from an ORM object (SQLAlchemy)
-        from_attributes = True
+    # Modern Pydantic V2 configuration for ORM compatibility
+    model_config = ConfigDict(from_attributes=True)
 
-
-# =================================
-#       TOKEN SCHEMAS
-# =================================
-
-# --- Token Schema ---
-# The shape of the response when a user successfully logs in.
 class Token(BaseModel):
+    """
+    JWT Token response structure.
+    """
     access_token: str
     token_type: str
 
-# --- Token Data Schema ---
-# The shape of the data encoded within the JWT access token.
 class TokenData(BaseModel):
+    """
+    Data embedded in the JWT payload.
+    """
     email: Optional[str] = None

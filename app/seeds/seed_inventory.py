@@ -65,14 +65,13 @@ def get_system_user(db: Session) -> User:
     if user:
         return user
         
-    # 3. Create dummy system user if none exists (Fix: Use 'name', not 'full_name')
+    # 3. Create dummy system user if none exists
     print("Creating temporary system user for seeding...")
     user = User(
         email="admin@example.com",
         hashed_password="hashed_secret", # Dummy hash
-        name="System Admin",             # <--- FIXED: Was 'full_name'
+        name="System Admin",            
         tenant_id=DEMO_TENANT_ID,
-        is_active=True
     )
     db.add(user)
     db.commit()

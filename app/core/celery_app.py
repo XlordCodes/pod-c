@@ -1,13 +1,16 @@
 # app/core/celery_app.py
 import os
 from celery import Celery
-from celery.schedules import crontab
+from app.core.config import settings
+
+# Construct Redis URL from settings
+REDIS_URL = f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/0"
 
 # 1. Initialize Celery
 celery_app = Celery(
     "worker",
-    broker=os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"),
-    backend=os.getenv("CELERY_RESULT_BACKEND", "redis://redis:6379/0")
+    broker=REDIS_URL,
+    backend=REDIS_URL
 )
 
 # 2. Configuration
@@ -22,21 +25,21 @@ celery_app.conf.update(
 
 # 3. Auto-discover tasks
 celery_app.conf.imports = [
-    "app.tasks.email_tasks",
     "app.tasks.whatsapp_tasks",
+    "app.tasks.email_tasks",
     "app.tasks.ai_tasks",
     "app.tasks.scheduler",
-    "app.tasks.retry_tasks", # <--- NEW: Import the retry worker
+    "app.tasks.retry_tasks",
 ]
 
 # 4. Beat Schedule (Periodic Tasks)
 celery_app.conf.beat_schedule = {
-    # Existing Scheduler (Runs every minute)
+    # Scheduler: Checks for future-dated bulk jobs every minute
     "check-scheduled-jobs-every-minute": {
         "task": "check_scheduled_jobs",
         "schedule": 60.0,
     },
-    # NEW: Retry Worker (Runs every 5 minutes)
+    # Retry Worker: Scans for failed messages every 5 minutes
     "retry-failed-messages-every-5-min": {
         "task": "retry_failed_bulk_messages",
         "schedule": 300.0, 

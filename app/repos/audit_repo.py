@@ -23,10 +23,12 @@ class AuditRepo:
     def add_log(self, log: AuditLog) -> AuditLog:
         """
         Persists a new audit log entry to the database.
+        
+        Note: Does NOT commit. The transaction must be managed by the Service layer.
+        Using flush() ensures the ID is generated for immediate use.
         """
         self.db.add(log)
-        self.db.commit()
-        self.db.refresh(log)
+        self.db.flush() 
         return log
 
     def list_logs(
@@ -69,10 +71,11 @@ class ActivityRepo:
     def add(self, activity: ActivityFeed) -> ActivityFeed:
         """
         Persists a new activity feed item.
+        
+        Note: Does NOT commit. The transaction must be managed by the Service layer.
         """
         self.db.add(activity)
-        self.db.commit()
-        self.db.refresh(activity)
+        self.db.flush()
         return activity
 
     def recent_for_user(self, user_id: int, limit: int = 20) -> List[ActivityFeed]:

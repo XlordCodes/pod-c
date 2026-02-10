@@ -3,10 +3,11 @@ from contextvars import ContextVar
 from typing import Optional
 
 # Context variables to store state during a request lifecycle
-request_id_ctx: ContextVar[str] = ContextVar("request_id", default=None)
+request_id_ctx: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
 user_id_ctx: ContextVar[Optional[int]] = ContextVar("user_id", default=None)
+tenant_id_ctx: ContextVar[Optional[int]] = ContextVar("tenant_id", default=None)
 
-def get_request_id() -> str:
+def get_request_id() -> Optional[str]:
     return request_id_ctx.get()
 
 def set_request_id(request_id: str):
@@ -17,3 +18,9 @@ def get_user_id() -> Optional[int]:
 
 def set_user_id(user_id: int):
     user_id_ctx.set(user_id)
+
+def get_tenant_id() -> Optional[int]:
+    return tenant_id_ctx.get()
+
+def set_tenant_id(tenant_id: int):
+    tenant_id_ctx.set(tenant_id)

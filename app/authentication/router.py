@@ -65,7 +65,6 @@ async def get_current_user(
         raise credentials_exception
         
     # Set the context variable on the main event loop
-    # This ensures it propagates to route handlers run in threadpools
     set_user_id(user.id)
     
     return user
@@ -76,7 +75,6 @@ class RoleChecker:
     def __init__(self, allowed_roles: list[str]):
         self.allowed_roles = allowed_roles
 
-    # CHANGED: Made async to match get_current_user
     async def __call__(self, user: models.User = Depends(get_current_user)):
         if not user.role or user.role.name not in self.allowed_roles:
             raise HTTPException(
@@ -118,8 +116,16 @@ def login_for_access_token(
         )
     
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    # This allows the middleware to extract them later for RLS context
+    token_payload = {
+        "sub": user.email,
+        "id": user.id,
+        "tenant_id": user.tenant_id
+    }
+    
     access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
+        data=token_payload, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
 

@@ -10,21 +10,18 @@ class Settings(BaseSettings):
 
     # --- Database Configuration ---
     # Primary database connection string (PostgreSQL)
-    # This is required. The app will crash immediately if missing.
     DATABASE_URL: str
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 10
 
     # --- Security & Encryption ---
+    # Used for AES-GCM encryption of sensitive database fields.
     ENCRYPTION_KEY: str
 
-    # --- Celery Configuration (NEW) ---
+    # --- Celery Configuration ---
     # Points to the 'redis' service defined in docker-compose
     CELERY_BROKER_URL: str = "redis://redis:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/0"
-
-    # --- Observability ---
-    SENTRY_DSN: Optional[str] = None
     
     # --- Redis ---
     REDIS_HOST: str = "redis"
@@ -47,20 +44,15 @@ class Settings(BaseSettings):
     SENDGRID_API_KEY: Optional[str] = None
     DEFAULT_SENDER_EMAIL: str = "noreply@example.com"
 
-    # --- AI Services (Cohere) ---
-    # Required for Sentiment Analysis, RAG, and Reply Suggestions.
-    COHERE_API_KEY: Optional[str] = None
+    # --- AI Services (OpenAI) ---
+    # Required for RAG (Embeddings). Replaces Cohere.
+    OPENAI_API_KEY: Optional[str] = None
 
-    # --- Security & Encryption ---
-    # Used for AES-GCM encryption of sensitive database fields.
-    ENCRYPTION_KEY: str
-
-    # --- Observability (Module 8) ---
+    # --- Observability ---
     SENTRY_DSN: Optional[str] = None
 
     # --- Config Loading ---
     # Load settings from the .env file if available.
-    # 'extra="ignore"' allows you to have other keys in .env without crashing.
     model_config = SettingsConfigDict(
         env_file=".env", 
         env_ignore_empty=True,

@@ -4,23 +4,21 @@ Module: Leads API Router
 Context: Pod B - Interface Layer (Module 1).
 
 Exposes REST endpoints for managing Leads and promoting them to Deals.
-Handles HTTP request validation, authentication context, and service invocation.
+Delegates all business logic to LeadService.
 """
 
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-# Core Imports
+# --- Core Imports ---
 from app.database import get_db
 from app.authentication.router import get_current_user
 from app.models.auth import User
 
-# Domain Imports (Pod B Module 1)
-from app.repos.lead_repo import LeadRepo
-from app.repos.deal_repo import DealRepo
+# --- Domain Imports ---
 from app.services.lead_service import LeadService
-from app.schemas.crm import LeadCreate, LeadOut, PromoteRequest, DealOut
+from app.schemas.crm import LeadCreate, LeadOut, DealOut
 
 # Initialize Router
 router = APIRouter()
@@ -29,102 +27,90 @@ router = APIRouter()
 
 def get_service(db: Session = Depends(get_db)) -> LeadService:
     """
-    Factory function to instantiate the LeadService with its required Repositories.
-    This pattern allows the Service to remain independent of the specific DB session lifecycle.
+    Factory function to instantiate the LeadService.
+    
+    CRITICAL FIX: We pass only the 'db' session. 
+    The Service handles initializing its own Repositories internally.
     """
-    return LeadService(LeadRepo, DealRepo, db)
+    return LeadService(db)
 
 # --- Endpoints ---
 
 @router.post("/", response_model=LeadOut, status_code=status.HTTP_201_CREATED)
 def create_lead(
-    payload: LeadCreate, 
+    lead_in: LeadCreate,
     service: LeadService = Depends(get_service),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Create a new Lead in the system.
+    Create a new Lead.
     
-    Args:
-        payload: Pydantic schema containing name and email.
-        service: Injected LeadService.
-        current_user: The authenticated user making the request.
+    - Enforces tenant isolation (Lead belongs to User's Tenant).
+    - Sets the current user as the Lead owner.
     """
     if not current_user.tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="Tenant context required for this operation."
-        )
-        
+         raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST, 
+             detail="User is not associated with a valid tenant."
+         )
+         
     return service.create_lead(
         tenant_id=current_user.tenant_id, 
         owner_id=current_user.id, 
-        data=payload
+        data=lead_in
     )
 
 @router.get("/", response_model=List[LeadOut])
 def list_leads(
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
     service: LeadService = Depends(get_service),
     current_user: User = Depends(get_current_user)
 ):
     """
     Get a paginated list of leads for the current tenant.
-    
-    Args:
-        skip: Records to skip (default 0).
-        limit: Max records to return (default 100).
     """
     if not current_user.tenant_id:
         return []
         
-    return service.list_leads(current_user.tenant_id, limit, skip)
+    return service.list_leads(
+        tenant_id=current_user.tenant_id, 
+        limit=limit, 
+        skip=skip
+    )
 
-@router.post("/{lead_id}/promote", response_model=DealOut)
-def promote_lead(
-    lead_id: int, 
-    payload: PromoteRequest, 
+@router.post("/{lead_id}/convert", response_model=DealOut)
+def convert_lead_to_deal(
+    lead_id: int,
+    value_cents: int = Query(..., description="Estimated value of the deal in cents", ge=0),
     service: LeadService = Depends(get_service),
     current_user: User = Depends(get_current_user)
 ):
     """
     Promote a Lead to a Deal.
     
-    Triggers the 'promote_to_deal' workflow in the service layer.
-    If successful, returns the created Deal object.
-    
-    Args:
-        lead_id: The ID of the lead to convert.
-        payload: Request body containing 'value_cents'.
+    - Atomic Operation: Updates Lead status -> Creates Deal -> Fires Event.
+    - Idempotent: Will fail if Lead is already converted.
     """
     if not current_user.tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="Tenant context required for this operation."
-        )
-
-    # Determine seller: use payload ID if provided, else default to current user
-    seller_id = payload.seller_id if payload.seller_id else current_user.id
+         raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST, 
+             detail="User has no tenant."
+         )
 
     try:
-        deal = service.promote_to_deal(
+        return service.promote_to_deal(
             tenant_id=current_user.tenant_id,
             lead_id=lead_id,
-            value_cents=payload.value_cents,
-            seller_id=seller_id
+            value_cents=value_cents,
+            seller_id=current_user.id
         )
-        return deal
-    
     except ValueError as e:
-        # Map domain-level validation errors (e.g. "already converted") to HTTP 400
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail=str(e)
-        )
+        # Catch business rule violations (e.g. "Lead already converted")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         # Catch unexpected server errors
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while processing the promotion."
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="Failed to promote lead."
         )

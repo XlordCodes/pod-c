@@ -11,7 +11,7 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 import sentry_sdk
-from fastapi import FastAPI
+from fastapi import FastAPI, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 
 # --- CORE IMPORTS ---
@@ -20,13 +20,16 @@ from app.metrics.prometheus import init_metrics
 from app.core.config import settings
 from app.core.middleware import RequestContextMiddleware
 
+# --- DATABASE IMPORTS (CRITICAL FIX) ---
+from app.database import Base, engine
+
 # --- EVENT BUS IMPORTS (Module 7) ---
 from app.core.event_bus import event_bus, set_main_loop
 from app.subscribers.inventory_subscribers import setup_inventory_subscribers
 
 # --- ROUTER IMPORTS ---
-from app.api.router import api_router  # The central router
-from app.api.ops import router as ops_router  # Operations (Health/Metrics)
+# Importing this ensures all Models are loaded into Base.metadata via side-effects
+from app.api.router import api_router
 
 # --- CONFIGURATION ---
 configure_logging()
@@ -48,8 +51,15 @@ async def lifespan(app: FastAPI):
     """
     logger.info("🚀 Application startup: Initializing resources.")
     
-    # 1. Capture the Main Loop (CRITICAL FIX)
-    # This allows sync worker threads (like InventoryService) to talk to async EventBus
+    # 1. Create Database Tables (The Missing Link)
+    # This creates 'users', 'contacts', 'bulk_jobs', etc. if they don't exist
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("✅ Database tables verified/created.")
+    except Exception as e:
+        logger.error(f"❌ Database setup failed: {e}")
+
+    # 2. Capture the Main Loop
     try:
         loop = asyncio.get_running_loop()
         set_main_loop(loop)
@@ -57,15 +67,13 @@ async def lifespan(app: FastAPI):
     except RuntimeError as e:
         logger.error(f"❌ Failed to capture main loop: {e}")
 
-    # 2. Initialize Event Bus Subscribers
-    # This wires the 'InventoryService' events to their background handlers.
+    # 3. Initialize Event Bus Subscribers
     setup_inventory_subscribers(event_bus)
     logger.info("📡 Event Bus: Subscribers registered.")
 
     yield
     
     logger.info("🛑 Application shutdown: Cleaning up resources.")
-    # (Optional) If we had a Redis/Kafka connection, we would close it here.
 
 # --- APP INIT ---
 app = FastAPI(
@@ -92,12 +100,24 @@ init_metrics(app)
 # 1. Main API Group (/v1/api/...)
 app.include_router(api_router, prefix="/v1/api")
 
-# 2. Operations (/ops/...)
-app.include_router(ops_router)
+# 2. Health Checks
+ops_router = APIRouter(tags=["Operations"])
+
+@ops_router.get("/health")
+def health_check():
+    """Kubernetes Liveness Probe"""
+    return {"status": "ok", "version": "1.0.0"}
+
+@ops_router.get("/ready")
+def readiness_check():
+    """Kubernetes Readiness Probe"""
+    return {"status": "ready"}
+
+app.include_router(ops_router, prefix="/ops")
 
 @app.get("/", tags=["Root"])
 def root():
     return {
         "status": "AI-Native CRM Backend is running!",
-        "module_7_events": "Active"
+        "docs": "/docs"
     }

@@ -80,7 +80,7 @@ text
 DATABASE_URL=postgresql://postgres:username@db:5432/crm_main
 SENDGRID_API_KEY=your_sendgrid_key
 DEFAULT_SENDER_EMAIL=your@email.com
-COHERE_API_KEY=your_cohere_key
+OPENAI_API_KEY=your_openai_key
 WHATSAPP_TOKEN=your_whatsapp_token
 WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
 WHATSAPP_APP_SECRET=your_app_secret

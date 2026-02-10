@@ -1,176 +1,127 @@
 # app/api/contacts.py
-import re
-from fastapi import APIRouter, HTTPException, Depends, Query
+"""
+Module: Contacts API Router
+Context: Pod A - Interface Layer.
+
+Exposes REST endpoints for managing Contacts.
+Delegates all business logic, validation, and caching to ContactService.
+"""
+
+from typing import List
+from fastapi import APIRouter, HTTPException, Depends, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
-from typing import List, Optional, Dict, Any
-from datetime import datetime
-from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.database import get_db
-from app.models import Contact, User
+from app.models.auth import User
 from app.authentication.router import get_current_user 
-from app.core.cache import get_cache, set_cache, invalidate_cache
+from app.services.contact_service import ContactService
+from app.schemas.crm import ContactCreate, ContactUpdate, ContactOut
 
 router = APIRouter()
 
-# --- Pydantic Models ---
+# --- Dependency Injection ---
 
-class ContactBase(BaseModel):
-    name: str
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    custom_fields: Optional[Dict[str, Any]] = {}
+def get_service(db: Session = Depends(get_db)) -> ContactService:
+    """
+    Factory to create the ContactService with the current DB session.
+    """
+    return ContactService(db)
 
-    @field_validator('phone')
-    def validate_phone(cls, v):
-        if v is None:
-            return v
-        # Remove spaces, dashes, parentheses
-        clean_number = re.sub(r'[\s\-\(\)]', '', v)
-        # Regex for E.164
-        if not re.match(r'^\+?[1-9]\d{9,14}$', clean_number):
-            raise ValueError('Phone number must be in valid E.164 format')
-        return clean_number
+# --- Endpoints ---
 
-class ContactIn(ContactBase):
-    pass
-
-class ContactUpdate(BaseModel):
-    """Partial update model"""
-    name: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    custom_fields: Optional[Dict[str, Any]] = None
-
-class ContactOut(ContactBase):
-    id: int
-    owner_id: int
-    created_at: datetime
-    
-    model_config = ConfigDict(from_attributes=True)
-
-# --- ENDPOINTS ---
-
-@router.post("/contacts", response_model=ContactOut)
+@router.post("/contacts", response_model=ContactOut, status_code=status.HTTP_201_CREATED)
 async def create_contact(
-    contact: ContactIn, 
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    contact: ContactCreate, 
+    current_user: User = Depends(get_current_user),
+    service: ContactService = Depends(get_service)
 ):
-    """Creates a new contact owned by the user."""
-    # Note: owner_id is derived from token, not payload (Security Best Practice)
-    db_contact = Contact(
-        **contact.model_dump(), 
-        owner_id=current_user.id
-    )
+    """
+    Create a new contact.
     
+    - Enforces tenant isolation.
+    - Invalidates the user's contact list cache.
+    """
+    if not current_user.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="User must belong to a tenant to create contacts."
+        )
+
     try:
-        db.add(db_contact)
-        db.commit()
-        db.refresh(db_contact)
-        
-        await invalidate_cache(f"contacts:{current_user.id}:*")
-        return db_contact
-        
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=400, detail="Contact with this phone or email already exists.")
+        return await service.create_contact(
+            tenant_id=current_user.tenant_id,
+            owner_id=current_user.id,
+            data=contact
+        )
+    except ValueError as e:
+        # Catch duplicate email/phone errors from service
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal Server Error")
 
 @router.get("/contacts", response_model=List[ContactOut])
 async def get_contacts(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    service: ContactService = Depends(get_service)
 ):
-    """Get all contacts belonging to the CURRENT user."""
-    cache_key = f"contacts:{current_user.id}:{skip}:{limit}"
+    """
+    Get all contacts for the current user.
     
-    if cached := await get_cache(cache_key):
-        return cached
-
-    contacts = db.query(Contact)\
-        .filter(Contact.owner_id == current_user.id)\
-        .order_by(Contact.created_at.desc())\
-        .offset(skip)\
-        .limit(limit)\
-        .all()
-    
-    # Serialize for cache
-    contacts_data = [ContactOut.model_validate(c).model_dump(mode="json") for c in contacts]
-    await set_cache(cache_key, contacts_data, expire=60)
-    
-    return contacts
+    - Uses Read-Through Caching (Redis).
+    """
+    return await service.list_contacts(
+        owner_id=current_user.id, 
+        skip=skip, 
+        limit=limit
+    )
 
 @router.get("/contacts/{contact_id}", response_model=ContactOut)
 async def get_contact(
     contact_id: int, 
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    service: ContactService = Depends(get_service)
 ):
-    contact = db.query(Contact).filter(
-        Contact.id == contact_id, 
-        Contact.owner_id == current_user.id
-    ).first()
-    
-    if not contact:
-        raise HTTPException(status_code=404, detail="Contact not found")
-    return contact
+    """
+    Get a specific contact by ID.
+    """
+    try:
+        return await service.get_contact(contact_id, current_user.id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found")
 
 @router.put("/contacts/{contact_id}", response_model=ContactOut)
 async def update_contact(
     contact_id: int,
     contact_update: ContactUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    service: ContactService = Depends(get_service)
 ):
-    """Updates an existing contact."""
-    db_contact = db.query(Contact).filter(
-        Contact.id == contact_id,
-        Contact.owner_id == current_user.id
-    ).first()
-
-    if not db_contact:
-        raise HTTPException(status_code=404, detail="Contact not found")
-
-    # Update only provided fields
-    update_data = contact_update.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(db_contact, key, value)
-
+    """
+    Update a contact.
+    
+    - Clears the cache for this user.
+    """
     try:
-        db.commit()
-        db.refresh(db_contact)
-        await invalidate_cache(f"contacts:{current_user.id}:*")
-        return db_contact
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=400, detail="Update failed. Phone/Email conflict.")
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        return await service.update_contact(contact_id, current_user.id, contact_update)
+    except ValueError as e:
+        # Check if error message implies 'Not Found' or 'Conflict'
+        if "not found" in str(e).lower():
+             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 @router.delete("/contacts/{contact_id}")
 async def delete_contact(
     contact_id: int, 
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    service: ContactService = Depends(get_service)
 ):
-    contact = db.query(Contact).filter(
-        Contact.id == contact_id,
-        Contact.owner_id == current_user.id
-    ).first()
-    
-    if not contact:
-        raise HTTPException(status_code=404, detail="Contact not found")
-    
-    db.delete(contact)
-    db.commit()
-    
-    await invalidate_cache(f"contacts:{current_user.id}:*")
-    
-    return {"status": "deleted"}
+    """
+    Delete a contact.
+    """
+    try:
+        await service.delete_contact(contact_id, current_user.id)
+        return {"status": "deleted"}
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found")

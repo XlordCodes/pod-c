@@ -5,65 +5,69 @@ Context: Pod B - Business Logic Layer.
 
 Orchestrates the lifecycle of Leads, including creation, listing, and the critical
 'promote_to_deal' workflow.
-Uses dependency injection for Repositories to allow easy mocking in unit tests.
+Uses dependency injection for Repositories and the Event Bus.
 """
 
+import asyncio
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
-from fastapi import HTTPException, status
 
-# Import Models and Schemas
-from app.schemas.crm import LeadCreate, LeadOut, DealOut
+# Import Event Bus Bridge
+from app.core.event_bus import event_bus, get_main_loop
+
+# Import Models, Schemas, and Events
+from app.schemas.crm import LeadCreate
 from app.models.crm import Lead, Deal
+from app.events.crm_events import DealCreated
+
+# Import Repositories
+from app.repos.lead_repo import LeadRepo
+from app.repos.deal_repo import DealRepo
 
 class LeadService:
     """
     Service class containing pure business logic for Leads.
     """
-    def __init__(self, lead_repo_class, deal_repo_class, db_session: Session):
+    def __init__(self, db: Session):
         """
-        Initialize the service with Repository classes and a DB session.
+        Initialize the service with a DB session.
+        Instantiates required Repositories immediately.
         
         Args:
-            lead_repo_class: The class definition for LeadRepo (not an instance).
-            deal_repo_class: The class definition for DealRepo (not an instance).
-            db_session (Session): The active SQLAlchemy session.
+            db (Session): The active SQLAlchemy session.
         """
-        self.lead_repo_class = lead_repo_class
-        self.deal_repo_class = deal_repo_class
-        self.db = db_session
+        self.db = db
+        self.lead_repo = LeadRepo(db)
+        self.deal_repo = DealRepo(db)
 
-    def create_lead(self, tenant_id: int, owner_id: int, data: LeadCreate) -> LeadOut:
+    def create_lead(self, tenant_id: int, owner_id: int, data: LeadCreate) -> Lead:
         """
-        Creates a new lead using the injected LeadRepo.
+        Creates a new lead using the LeadRepo.
         
         Args:
-            tenant_id (int): Context tenant.
+            tenant_id (int): The tenant context.
             owner_id (int): The user creating the lead.
-            data (LeadCreate): Validated request data.
+            data (LeadCreate): Validated input data.
             
         Returns:
-            Lead: The created lead object.
+            Lead: The persisted lead object.
         """
-        repo = self.lead_repo_class(self.db)
-        # Note: 'create' method signature in LeadRepo matches this call
-        return repo.create(tenant_id, data.name, data.email, owner_id)
+        return self.lead_repo.create(tenant_id, owner_id, data)
 
-    def list_leads(self, tenant_id: int, limit: int = 100, skip: int = 0) -> List[LeadOut]:
+    def list_leads(self, tenant_id: int, limit: int = 100, skip: int = 0) -> List[Lead]:
         """
         Retrieves a paginated list of leads for the tenant.
         
         Args:
-            tenant_id (int): Context tenant.
-            limit (int): Max records.
+            tenant_id (int): The tenant context.
+            limit (int): Max records to return.
             skip (int): Pagination offset.
             
         Returns:
-            List[Lead]: List of leads.
+            List[Lead]: A list of lead objects.
         """
-        repo = self.lead_repo_class(self.db)
-        return repo.list_all(tenant_id, limit, skip)
+        return self.lead_repo.list_all(tenant_id, limit, skip)
 
     def promote_to_deal(
         self, 
@@ -71,16 +75,15 @@ class LeadService:
         lead_id: int, 
         value_cents: int, 
         seller_id: Optional[int] = None
-    ) -> DealOut:
+    ) -> Deal:
         """
         Atomic Workflow: Promote a Lead to a Deal.
         
         Business Rules:
         1. Lead must exist and belong to the tenant.
         2. Lead must not be already converted.
-        3. The creation of the Deal and the status update of the Lead must happen
-           atomically (all or nothing).
-           
+        3. Atomicity: DB Commit + Event Publication.
+        
         Args:
             tenant_id (int): Context tenant.
             lead_id (int): ID of the lead to promote.
@@ -91,16 +94,12 @@ class LeadService:
             Deal: The newly created deal.
             
         Raises:
-            ValueError: If logic preconditions fail (e.g., lead not found).
+            ValueError: If logic preconditions fail.
             SQLAlchemyError: If database persistence fails.
         """
         try:
-            # Instantiate repos with the shared session
-            lead_repo = self.lead_repo_class(self.db)
-            deal_repo = self.deal_repo_class(self.db)
-
             # 1. Fetch Lead (Read)
-            lead = lead_repo.get(lead_id, tenant_id)
+            lead = self.lead_repo.get(lead_id, tenant_id)
             if not lead:
                 raise ValueError("Lead not found")
 
@@ -109,8 +108,8 @@ class LeadService:
                 raise ValueError("Lead has already been converted")
 
             # 3. Create Deal (Write 1)
-            # We assume the repo handles 'add' but we rely on the final commit here for atomicity
-            deal = deal_repo.create(
+            # Note: Repo methods use 'flush' so we stay in the same transaction
+            deal = self.deal_repo.create(
                 tenant_id=tenant_id,
                 lead_id=lead.id,
                 value_cents=value_cents,
@@ -118,17 +117,30 @@ class LeadService:
             )
 
             # 4. Update Lead Status (Write 2)
-            lead.status = "converted"
-            self.db.add(lead)
+            self.lead_repo.update_status(lead, "converted")
             
-            # 5. Commit Transaction (Atomic)
-            # This commits BOTH the new Deal and the Lead update.
+            # 5. Commit Transaction (Atomic DB Operation)
             self.db.commit()
             self.db.refresh(deal)
+            
+            # 6. Publish Domain Event (Fire-and-Forget)
+            # Since this Service runs in a ThreadPool (Sync), we must dispatch
+            # the event to the Main Asyncio Loop to allow background processing.
+            event = DealCreated(
+                tenant_id=tenant_id,
+                deal_id=deal.id,
+                lead_id=lead.id,
+                value_cents=value_cents,
+                seller_id=seller_id
+            )
+            
+            main_loop = get_main_loop()
+            if main_loop and main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(event_bus.publish(event), main_loop)
             
             return deal
 
         except SQLAlchemyError as e:
-            # Rollback ensuring no partial state is left (e.g. Deal created but Lead not updated)
+            # Rollback ensuring no partial data state (e.g. Deal created but Lead not updated)
             self.db.rollback()
             raise e

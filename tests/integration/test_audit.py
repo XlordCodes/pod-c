@@ -24,7 +24,7 @@ async def test_audit_log_creation(client, db_session, auth_headers):
     
     # Path: /v1/api/contacts (Matches router.py)
     res = await client.post("/v1/api/contacts", json=contact_payload, headers=auth_headers)
-    assert res.status_code == 200, f"Contact creation failed: {res.text}"
+    assert res.status_code == 201, f"Contact creation failed: {res.text}"
     
     # 2. Check Audit Logs in DB
     # We expect an entry with action="INSERT" (or "create") for entity="Contact"
