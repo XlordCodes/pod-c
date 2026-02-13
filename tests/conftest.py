@@ -2,6 +2,7 @@ import pytest
 import pytest_asyncio
 import uuid
 import asyncio
+import os
 from dotenv import load_dotenv
 from unittest.mock import MagicMock
 from datetime import timedelta
@@ -9,12 +10,18 @@ from datetime import timedelta
 # 1. Force load .env
 load_dotenv()
 
+# 2. Override Redis configuration for local testing BEFORE importing app modules
+# This prevents connection errors when running tests on Windows (where Redis hostname "redis" doesn't resolve)
+os.environ["REDIS_HOST"] = "localhost"
+os.environ["CELERY_BROKER_URL"] = "redis://localhost:6379/0"
+os.environ["CELERY_RESULT_BACKEND"] = "redis://localhost:6379/0"
+
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 
 # Rename to avoid collision with 'app' module
-from app.main import app as fastapi_app 
+from app.main import app as fastapi_app
 from app.database import Base, get_db
 from app.core.config import settings
 
@@ -34,6 +41,22 @@ engine = create_engine(settings.DATABASE_URL, pool_size=1, max_overflow=0)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 @pytest.fixture(scope="session", autouse=True)
+def override_redis_config():
+    """
+    Override Redis configuration for local testing.
+    
+    Problem: Docker Compose uses hostname "redis", but on Windows localhost,
+    this hostname doesn't resolve, causing connection errors (Error 11001).
+    
+    Solution: Force Redis to use "localhost" for tests since port 6379 is exposed.
+    This runs at module import time (via os.environ above) and this fixture
+    confirms the override was applied.
+    """
+    print(f"INFO: Redis configuration overridden for tests - Host: {settings.REDIS_HOST}, Port: {settings.REDIS_PORT}")
+    print(f"INFO: Celery Broker: {settings.CELERY_BROKER_URL}")
+    yield
+
+@pytest.fixture(scope="session", autouse=True)
 def setup_test_database():
     with engine.connect() as connection:
         connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -46,51 +69,94 @@ def setup_test_database():
 
 class TestSession(Session):
     """
-    A wrapper around the standard SQLAlchemy Session.
-    It intercepts commit() and rollback() to ensure they only work 
-    on SAVEPOINTS, protecting the outer test transaction.
+    A wrapper around the standard SQLAlchemy Session that uses nested transactions (savepoints)
+    to isolate service-level commits and rollbacks from the outer test transaction.
+    
+    Key Strategy:
+    - The outer transaction (managed by the fixture) wraps the entire test
+    - Each service commit/rollback operates on a SAVEPOINT, not the outer transaction
+    - This allows services to use explicit transaction control without affecting test isolation
     """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # Start the first savepoint immediately
-        self.begin_nested()
+        self._savepoint = None
 
     def commit(self):
         """
-        Mock Commit: Flush changes to DB (so queries see them),
-        then restart the savepoint to 'seal' this step.
+        Intercepts commit() to work on savepoints instead of the outer transaction.
+        
+        Flow:
+        1. Flush changes to make them visible within the transaction
+        2. Commit the current savepoint (makes changes durable within the outer transaction)
+        3. Start a new savepoint for the next operation
         """
+        # Flush to ensure all pending changes are written
         self.flush()
+        
+        # If we have an active savepoint, commit it
+        if self._savepoint is not None:
+            self._savepoint.commit()
+            self._savepoint = None
+        
+        # Expire all objects to force fresh reads
         self.expire_all()
-        # Close current savepoint and start a new one
-        super().commit() 
-        self.begin_nested()
+        
+        # Start a new savepoint for the next operation
+        self._savepoint = self.begin_nested()
 
     def rollback(self):
         """
-        Mock Rollback: Roll back ONLY the current savepoint (the failed step),
-        then restart a new savepoint for the next step.
-        Does NOT roll back the parent transaction (Test Setup).
+        Intercepts rollback() to only rollback the current savepoint.
+        
+        Flow:
+        1. Rollback the current savepoint (undoes changes since last savepoint)
+        2. Start a new savepoint for the next operation
+        
+        CRITICAL: This does NOT rollback the outer transaction, preserving test setup data.
         """
-        super().rollback()
-        self.begin_nested()
+        # If we have an active savepoint, rollback to it
+        if self._savepoint is not None:
+            self._savepoint.rollback()
+            self._savepoint = None
+        
+        # Start a new savepoint for the next operation
+        self._savepoint = self.begin_nested()
+
+    def close(self):
+        """
+        Clean up savepoint state before closing.
+        """
+        if self._savepoint is not None:
+            self._savepoint = None
+        super().close()
 
 @pytest.fixture(scope="function")
 def db_session(setup_test_database):
     """
     Creates a fresh database session for a test using the TestSession wrapper.
+    
+    Architecture:
+    1. Opens a connection to the database
+    2. Starts an outer transaction (this wraps the entire test)
+    3. Creates a TestSession bound to this connection
+    4. The TestSession automatically manages savepoints for service-level transactions
+    5. After the test, rolls back the outer transaction (cleanup)
     """
     connection = engine.connect()
     transaction = connection.begin()
     
-    # Use our custom class that handles nested transactions automatically
+    # Use our custom TestSession class
     session = TestSession(bind=connection)
+    
+    # Initialize the first savepoint
+    session._savepoint = session.begin_nested()
 
     yield session
 
-    # Teardown
+    # Teardown: Close session and rollback the outer transaction
     session.close()
-    transaction.rollback()
+    if transaction.is_active:
+        transaction.rollback()
     connection.close()
 
 @pytest_asyncio.fixture(scope="function")

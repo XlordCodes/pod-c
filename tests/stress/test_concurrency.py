@@ -17,6 +17,7 @@ from sqlalchemy import text
 from app.database import SessionLocal
 from app.services.inventory_service import InventoryService
 from app.schemas.inventory import ProductCreate, StockAdjustment
+from app.models.auth import User
 
 # --- FIXTURES ---
 
@@ -41,20 +42,27 @@ def setup_product(db_session):
     db_session.execute(text("DELETE FROM stock_transactions"))
     db_session.execute(text("DELETE FROM products"))
     # Clean up the dummy user if it exists from a previous run
-    db_session.execute(text("DELETE FROM users WHERE id = 999"))
+    db_session.execute(text("DELETE FROM users WHERE email = 'stress_test@example.com'"))
     db_session.commit()
 
-    # 2. Create Dummy User for Audit Logs (Fixes ForeignKeyViolation)
-    # We force ID 999 so we can rely on it later
-    db_session.execute(text(
-        "INSERT INTO users (id, email, hashed_password, role_id) VALUES (999, 'stress_test@example.com', 'dummy_hash', NULL)"
-    ))
+    # 2. Create Dummy User for Audit Logs using ORM (Fixes IntegrityErrors)
+    test_user = User(
+        id=999,
+        email='stress_test@example.com',
+        hashed_password='dummy_hash',
+        role_id=None,
+        tenant_id=None
+    )
+    db_session.add(test_user)
     db_session.commit()
 
     # 3. Create Service
     svc = InventoryService(db_session)
     
-    # 4. Create Product
+    # 4. Disable event publishing for setup (prevents async warnings)
+    svc._publish_event_safe = lambda event: None
+    
+    # 5. Create Product
     product = svc.create_product(
         tenant_id=1,
         schema=ProductCreate(
@@ -64,10 +72,10 @@ def setup_product(db_session):
             price=100.00,
             reorder_point=0
         ),
-        user_id=999  # <--- Now valid because we inserted User 999 above
+        user_id=999  # <--- Now valid because we created User 999 above
     )
     
-    # 5. Set Initial Stock to 10
+    # 6. Set Initial Stock to 10
     svc.adjust_stock(
         tenant_id=1,
         product_id=product.id,
@@ -90,6 +98,10 @@ def attempt_purchase(product_id: int, tenant_id: int):
     """
     session = SessionLocal()
     svc = InventoryService(session)
+    
+    # CRITICAL FIX: Disable event publishing to prevent async RuntimeWarnings
+    # This stress test focuses ONLY on DB transaction locking, not event side effects
+    svc._publish_event_safe = lambda event: None
     
     success = False
     message = ""
@@ -131,7 +143,7 @@ def test_inventory_race_condition(setup_product):
     tenant_id = 1
     total_buyers = 20
     
-    print(f"\n🏎️  Starting Race: {total_buyers} buyers vs 10 items...")
+    print(f"\n[RACE TEST] Starting Race: {total_buyers} buyers vs 10 items...")
 
     results = []
     
@@ -150,8 +162,8 @@ def test_inventory_race_condition(setup_product):
     successful_buys = sum(1 for r in results if r[0] is True)
     failed_buys = sum(1 for r in results if r[0] is False)
     
-    print(f"✅ Successful Buys: {successful_buys}")
-    print(f"❌ Failed Buys: {failed_buys}")
+    print(f"[SUCCESS] Successful Buys: {successful_buys}")
+    print(f"[FAILED] Failed Buys: {failed_buys}")
 
     # --- ASSERTIONS ---
 
@@ -165,7 +177,7 @@ def test_inventory_race_condition(setup_product):
     svc = InventoryService(final_session)
     final_product = svc.get_product(tenant_id, product_id)
     
-    print(f"📉 Final Stock Level: {final_product.stock}")
+    print(f"[FINAL] Final Stock Level: {final_product.stock}")
     
     assert final_product.stock == 0, f"CRITICAL FAILURE: Stock is {final_product.stock}, expected 0!"
     assert final_product.stock >= 0, "CRITICAL FAILURE: Stock went negative!"
