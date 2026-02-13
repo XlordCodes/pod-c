@@ -84,13 +84,34 @@ app = FastAPI(
 )
 
 # --- MIDDLEWARE ---
-origins = settings.BACKEND_CORS_ORIGINS if hasattr(settings, "BACKEND_CORS_ORIGINS") else ["*"]
+# SECURITY FIX: Strict CORS configuration - no wildcard origins allowed
+origins = settings.BACKEND_CORS_ORIGINS
+
+# Validate CORS configuration
+if not origins:
+    logger.warning(
+        "⚠️ SECURITY WARNING: BACKEND_CORS_ORIGINS is empty. "
+        "No cross-origin requests will be allowed. "
+        "Set BACKEND_CORS_ORIGINS in .env to whitelist specific domains."
+    )
+    # Fail-closed: Empty list means no origins are allowed
+    origins = []
+elif "*" in origins:
+    logger.error(
+        "❌ SECURITY ERROR: Wildcard '*' detected in BACKEND_CORS_ORIGINS. "
+        "This is a critical security risk in production."
+    )
+    raise RuntimeError(
+        "CORS misconfiguration: Wildcard origins are not allowed. "
+        "Please specify explicit domain names."
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 app.add_middleware(RequestContextMiddleware)
 init_metrics(app)

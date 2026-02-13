@@ -145,9 +145,16 @@ def verify_webhook(
 ):
     """
     Verification endpoint used by Meta when you first configure the webhook URL.
+    
+    SECURITY: Requires WHATSAPP_VERIFY_TOKEN to be configured in environment.
+    No fallback is provided - the application will fail to start if missing.
     """
-    # In production, use a secure random string from settings
-    VERIFY_TOKEN = settings.WHATSAPP_VERIFY_TOKEN or "my_secure_token"
+    # SECURITY FIX: No fallback allowed. Token must be explicitly configured.
+    if not settings.WHATSAPP_VERIFY_TOKEN:
+        logger.error("CRITICAL: WHATSAPP_VERIFY_TOKEN is not configured")
+        raise HTTPException(status_code=500, detail="Server misconfiguration")
+    
+    VERIFY_TOKEN = settings.WHATSAPP_VERIFY_TOKEN
 
     if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
         logger.info("✅ Webhook verified successfully.")

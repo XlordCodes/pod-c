@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     WHATSAPP_APP_SECRET: str
     WHATSAPP_TOKEN: str
     WHATSAPP_PHONE_NUMBER_ID: str
+    # SECURITY: Required token for webhook verification. No default allowed.
+    WHATSAPP_VERIFY_TOKEN: str
 
     # --- Email Integration (SendGrid) ---
     # Optional: If not provided, email features will be disabled or log-only.
@@ -51,10 +53,15 @@ class Settings(BaseSettings):
     # --- Observability ---
     SENTRY_DSN: Optional[str] = None
 
+    # --- CORS Configuration ---
+    # SECURITY: Whitelist of allowed origins. Defaults to empty list (fail-closed).
+    # Example: ["https://app.example.com", "https://admin.example.com"]
+    BACKEND_CORS_ORIGINS: list[str] = []
+
     # --- Config Loading ---
     # Load settings from the .env file if available.
     model_config = SettingsConfigDict(
-        env_file=".env", 
+        env_file=".env",
         env_ignore_empty=True,
         extra="ignore"
     )
