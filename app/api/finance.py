@@ -7,6 +7,7 @@ Exposes REST endpoints for Invoicing and Payments.
 Delegates logic to FinanceService (Double-Entry Bookkeeping).
 """
 
+import logging
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -23,6 +24,7 @@ from app.services.finance_service import FinanceService
 
 # Initialize Router
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # --- Dependency Injection ---
 
@@ -95,6 +97,11 @@ def record_payment(
     - Updates Invoice status (Partial/Paid).
     - Creates a Ledger Entry (Credit Cash).
     - Returns the updated Invoice.
+    
+    Error Handling:
+    - 400: Overpayment attempt or business rule violation
+    - 404: Invoice not found (or belongs to another tenant)
+    - 500: System error (logged with full context)
     """
     if not current_user.tenant_id:
          raise HTTPException(status_code=400, detail="User has no tenant.")
@@ -105,10 +112,14 @@ def record_payment(
             schema=payment_in
         )
     except HTTPException as e:
-        raise e
+        # CRITICAL: Re-raise HTTPExceptions directly (preserves 400/404 status codes)
+        # This prevents overpayment errors from becoming 500 errors
+        logger.info(f"Payment endpoint - HTTPException: {e.status_code} - {e.detail}")
+        raise
     except Exception as e:
         # Catch unexpected errors to prevent 500 crashes without context
+        logger.error(f"Payment endpoint - Unexpected error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail="Payment processing failed."
+            detail=f"Payment processing failed: {str(e)}"
         )

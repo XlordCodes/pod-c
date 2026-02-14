@@ -34,6 +34,9 @@ class InvoiceCreate(BaseModel):
     """
     Schema for creating a new Invoice.
     Includes nested items to allow atomic creation.
+    
+    SECURITY: Validates that invoice total is positive to prevent
+    negative invoices or credit memos from being created via this endpoint.
     """
     contact_id: int = Field(..., description="ID of the CRM Contact")
     currency: str = Field(default="USD", min_length=3, max_length=3)
@@ -43,6 +46,21 @@ class InvoiceCreate(BaseModel):
     @field_validator('currency')
     def uppercase_currency(cls, v):
         return v.upper()
+    
+    @field_validator('items')
+    def validate_positive_total(cls, v):
+        """
+        Ensure invoice total is positive.
+        Prevents negative invoices or zero-value invoices.
+        Credit memos should use a separate endpoint.
+        """
+        total = sum(
+            (Decimal(str(item.quantity)) * item.unit_price for item in v),
+            start=Decimal("0")
+        )
+        if total <= 0:
+            raise ValueError(f'Invoice total must be positive. Calculated total: {total}')
+        return v
 
 class PaymentCreate(PaymentBase):
     """Schema for recording a payment against an invoice."""

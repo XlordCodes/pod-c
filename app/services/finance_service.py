@@ -34,7 +34,11 @@ class FinanceService:
         """
         # 1. Calculate Total Amount
         # We compute this on the backend to prevent frontend tampering
-        total = sum(item.quantity * item.unit_price for item in schema.items)
+        # CRITICAL: Use Decimal("0") as start to prevent float arithmetic
+        total = sum(
+            (Decimal(str(item.quantity)) * item.unit_price for item in schema.items),
+            start=Decimal("0")
+        )
         
         try:
             # 2. Persist Invoice (Flush only, ID generated)
@@ -83,34 +87,55 @@ class FinanceService:
     def process_payment(self, tenant_id: int, schema: PaymentCreate) -> Invoice:
         """
         Records a payment, updates invoice status, and logs to ledger.
-        Atomic operation.
+        Atomic operation with row-level locking to prevent race conditions.
+        
+        SECURITY FEATURES:
+        - Pessimistic locking (SELECT FOR UPDATE) prevents concurrent payment processing
+        - Overpayment validation prevents collecting more than owed
+        - Decimal arithmetic prevents floating-point rounding errors
         """
         try:
-            # 1. Verify Invoice Exists
-            invoice = self.repo.get_invoice(schema.invoice_id, tenant_id)
+            # 1. Verify Invoice Exists (WITH ROW LOCK)
+            # CRITICAL: Use get_invoice_for_update to prevent race conditions
+            invoice = self.repo.get_invoice_for_update(schema.invoice_id, tenant_id)
             if not invoice:
                 raise HTTPException(status_code=404, detail="Invoice not found")
 
             if invoice.status == "cancelled":
                 raise HTTPException(status_code=400, detail="Cannot pay a cancelled invoice")
 
-            # 2. Record the Payment (Flush only)
+            # 2. Calculate Current Balance (BEFORE new payment)
+            # CRITICAL: Use Decimal arithmetic to prevent float errors
+            previous_paid = sum(
+                (Decimal(str(p.amount)) for p in invoice.payments),
+                start=Decimal("0")
+            )
+            remaining_balance = Decimal(str(invoice.total_amount)) - previous_paid
+            
+            # 3. Overpayment Validation
+            # CRITICAL: Prevent collecting more than owed
+            payment_amount = Decimal(str(schema.amount))
+            if payment_amount > remaining_balance:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Payment amount {schema.amount} exceeds remaining balance {remaining_balance}"
+                )
+
+            # 4. Record the Payment (Flush only)
             payment = self.repo.record_payment(tenant_id, schema)
 
-            # 3. Calculate New Balance
-            # Calculate total paid including the current NEW payment
-            previous_paid = sum(p.amount for p in invoice.payments)
+            # 5. Calculate New Total Paid
             total_paid = previous_paid + schema.amount
             
-            # 4. Update Status Logic
+            # 6. Update Status Logic
             new_status = invoice.status
-            if total_paid >= invoice.total_amount:
+            if total_paid >= Decimal(str(invoice.total_amount)):
                 new_status = "paid"
             elif total_paid > 0:
                 new_status = "partial"
             
             if new_status != invoice.status:
-                self.repo.update_status(invoice.id, new_status)
+                self.repo.update_status(invoice.id, tenant_id, new_status)
 
             # 5. Ledger Entry (Credit Cash/Bank) - Flush only
             # Tracks that money has been received
@@ -134,12 +159,15 @@ class FinanceService:
 
         except SQLAlchemyError as e:
             self.db.rollback()
-            logger.error(f"Database error processing payment: {e}")
+            logger.error(f"Database error processing payment: {e}", exc_info=True)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Transaction failed")
-        except HTTPException:
+        except HTTPException as e:
+            # CRITICAL: Re-raise HTTPExceptions (like overpayment errors) without wrapping them
+            # This ensures 400 errors are returned correctly instead of becoming 500
             self.db.rollback()
+            logger.info(f"Payment validation failed: {e.detail}")
             raise
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Unexpected error processing payment: {e}")
+            logger.error(f"Unexpected error processing payment: {e}", exc_info=True)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="System error")

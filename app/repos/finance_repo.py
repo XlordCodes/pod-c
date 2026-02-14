@@ -7,13 +7,17 @@ Handles database interactions for Invoices, Payments, and Ledger Entries.
 Isolates SQL logic from business rules.
 """
 
+import logging
 from typing import List, Optional
 from decimal import Decimal
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
+from sqlalchemy.dialects import sqlite
 
 from app.models.finance import Invoice, InvoiceItem, Payment, LedgerEntry
 from app.schemas.finance import InvoiceCreate, PaymentCreate
+
+logger = logging.getLogger(__name__)
 
 class FinanceRepo:
     """
@@ -21,7 +25,9 @@ class FinanceRepo:
     """
     def __init__(self, db: Session):
         self.db = db
-
+        # Detect if we're using SQLite (for test compatibility)
+        # SQLite doesn't support SELECT FOR UPDATE properly
+        self._is_sqlite = "sqlite" in self.db.bind.dialect.name.lower()
     def create_invoice(self, tenant_id: int, schema: InvoiceCreate, total_amount: Decimal) -> Invoice:
         """
         Creates an Invoice and its Line Items.
@@ -74,6 +80,43 @@ class FinanceRepo:
             .filter(Invoice.id == invoice_id, Invoice.tenant_id == tenant_id)
             .first()
         )
+    
+    def get_invoice_for_update(self, invoice_id: int, tenant_id: int) -> Optional[Invoice]:
+        """
+        Fetches an invoice with a pessimistic lock (SELECT FOR UPDATE).
+        Prevents concurrent modifications during payment processing.
+        
+        CRITICAL SECURITY: This blocks other transactions from reading/writing this row
+        until the current transaction commits or rolls back. This prevents race conditions
+        where multiple concurrent payments could be processed for the same invoice.
+        
+        SQLITE COMPATIBILITY: SQLite doesn't support FOR UPDATE properly in all cases.
+        We skip the lock for SQLite (tests), but keep it for PostgreSQL (production).
+        
+        Args:
+            invoice_id: The invoice ID to lock
+            tenant_id: Tenant ID for isolation
+            
+        Returns:
+            Invoice with row-level lock (PostgreSQL) or without lock (SQLite), or None if not found
+        """
+        query = (
+            self.db.query(Invoice)
+            .filter(Invoice.id == invoice_id, Invoice.tenant_id == tenant_id)
+        )
+        
+        # Only apply FOR UPDATE for PostgreSQL (not supported in SQLite tests)
+        if not self._is_sqlite:
+            query = query.with_for_update()
+        else:
+            logger.debug(f"SQLite detected: skipping FOR UPDATE lock for invoice {invoice_id}")
+        
+        invoice = query.first()
+        
+        # If found, we can explicitly load relationships if needed, 
+        # but usually the Service layer accesses them which triggers lazy loading.
+        # This is safe because the parent Invoice row is now locked.
+        return invoice
 
     def list_invoices(self, tenant_id: int, skip: int = 0, limit: int = 100) -> List[Invoice]:
         """
@@ -104,11 +147,24 @@ class FinanceRepo:
         self.db.flush() # Generate ID
         return payment
 
-    def update_status(self, invoice_id: int, new_status: str) -> Optional[Invoice]:
+    def update_status(self, invoice_id: int, tenant_id: int, new_status: str) -> Optional[Invoice]:
         """
         Updates the status of an invoice (e.g., 'draft' -> 'paid').
+        Enforces tenant isolation to prevent cross-tenant status manipulation.
+        
+        Args:
+            invoice_id: The invoice ID to update
+            tenant_id: Tenant ID for security isolation
+            new_status: New status value (e.g., 'paid', 'partial', 'cancelled')
+            
+        Returns:
+            Updated invoice or None if not found
         """
-        invoice = self.db.query(Invoice).filter(Invoice.id == invoice_id).first()
+        invoice = (
+            self.db.query(Invoice)
+            .filter(Invoice.id == invoice_id, Invoice.tenant_id == tenant_id)
+            .first()
+        )
         if invoice:
             invoice.status = new_status
             self.db.flush() # Persist change to session, but don't commit yet
