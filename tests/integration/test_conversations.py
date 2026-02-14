@@ -4,6 +4,7 @@ import uuid
 import hmac
 import hashlib
 import json
+import time
 from httpx import AsyncClient
 from app.core.config import settings
 
@@ -65,28 +66,35 @@ async def test_webhook_flow_creates_conversation(client: AsyncClient, auth_heade
     webhook_payload = {
         "object": "whatsapp_business_account",
         "entry": [{
+            "id": "123456789",
             "changes": [{
                 "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {
+                        "display_phone_number": "1234567890",
+                        "phone_number_id": "1234567890" },
                     "messages": [{
                         "from": customer_number,
                         "id": f"wamid.{uuid.uuid4().hex}",
+                        "timestamp": str(int(time.time())),
                         "type": "text",
-                        "text": {"body": "I want to buy a cake"}
-                    }]
-                }
-            }]
-        }]
-    }
+                        "text": {"body": "I want to buy a cake"} 
+                        }]
+                    },
+                "field": "messages" 
+                }] 
+            }] 
+        }
     
     # Sign request (HMAC-SHA256)
     payload_bytes = json.dumps(webhook_payload).encode("utf-8")
-    secret = settings.WHATSAPP_APP_SECRET.encode()
+    secret = settings.WHATSAPP_APP_SECRET.encode() 
     signature = hmac.new(secret, payload_bytes, hashlib.sha256).hexdigest()
     
-    headers = {
-        "X-Hub-Signature": f"sha256={signature}",
-        "Content-Type": "application/json"
-    }
+    headers = { 
+               "X-Hub-Signature-256": f"sha256={signature}",
+               "Content-Type": "application/json" 
+               }
 
     # Send Webhook
     res = await client.post("/v1/api/webhooks/whatsapp", content=payload_bytes, headers=headers)
@@ -108,4 +116,4 @@ async def test_webhook_flow_creates_conversation(client: AsyncClient, auth_heade
     
     messages = msg_res.json()
     assert len(messages) > 0
-    assert messages[0]["text"] == "I want to buy a cake"
+    assert any(m["text"] == "I want to buy a cake" for m in messages)

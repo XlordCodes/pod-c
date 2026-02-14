@@ -57,10 +57,10 @@ async def test_webhook_lifecycle(client: AsyncClient, monkeypatch):
     signature = sign_bytes(payload_bytes, mock_secret)
     
     # 5. Prepare Headers
-    # CRITICAL: Your webhooks.py asks for 'x_hub_signature', 
-    # so we send 'X-Hub-Signature' (standard casing).
+    # CRITICAL: Your webhooks.py now requires 'X-Hub-Signature-256' header
+    # for enhanced security (timing-attack resistant implementation).
     headers = {
-        "X-Hub-Signature": signature,
+        "X-Hub-Signature-256": signature,
         "Content-Type": "application/json"
     }
     
