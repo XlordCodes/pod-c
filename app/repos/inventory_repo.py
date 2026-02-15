@@ -48,15 +48,30 @@ class InventoryRepo:
         self.db.flush() 
         return product
 
-    def get_product(self, tenant_id: int, product_id: int) -> Optional[Product]:
+    def get_product(self, tenant_id: int, product_id: int, for_update: bool = False) -> Optional[Product]:
         """
         Retrieves a single product by ID, scoped to the tenant.
+        
+        Args:
+            tenant_id (int): The tenant context.
+            product_id (int): The product ID.
+            for_update (bool): If True, apply row-level lock (PostgreSQL only).
+            
+        Returns:
+            Optional[Product]: The product instance or None.
         """
-        return (
-            self.db.query(Product)
-            .filter(Product.id == product_id, Product.tenant_id == tenant_id)
-            .first()
+        query = self.db.query(Product).filter(
+            Product.id == product_id, 
+            Product.tenant_id == tenant_id
         )
+        
+        # Apply row-level lock if requested and database supports it
+        if for_update:
+            dialect = self.db.bind.dialect.name
+            if dialect != 'sqlite':
+                query = query.with_for_update()
+        
+        return query.first()
 
     def get_product_for_update(self, tenant_id: int, product_id: int) -> Optional[Product]:
         """
@@ -65,6 +80,9 @@ class InventoryRepo:
         Uses 'SELECT ... FOR UPDATE' to prevent race conditions.
         If another transaction holds the lock, this will wait until it releases.
         
+        NOTE: SQLite does not support FOR UPDATE, so we skip it for SQLite.
+        In production (PostgreSQL), this provides proper row-level locking.
+        
         Args:
             tenant_id (int): Context tenant.
             product_id (int): Product to lock.
@@ -72,12 +90,18 @@ class InventoryRepo:
         Returns:
             Optional[Product]: The locked product instance.
         """
-        return (
-            self.db.query(Product)
-            .filter(Product.id == product_id, Product.tenant_id == tenant_id)
-            .with_for_update()
-            .first()
+        query = self.db.query(Product).filter(
+            Product.id == product_id, 
+            Product.tenant_id == tenant_id
         )
+        
+        # Only apply FOR UPDATE for PostgreSQL (not SQLite)
+        # SQLite doesn't support row-level locking with FOR UPDATE
+        dialect = self.db.bind.dialect.name
+        if dialect != 'sqlite':
+            query = query.with_for_update()
+        
+        return query.first()
     
     def get_product_by_sku(self, tenant_id: int, sku: str) -> Optional[Product]:
         """

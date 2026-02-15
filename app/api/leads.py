@@ -5,8 +5,14 @@ Context: Pod B - Interface Layer (Module 1).
 
 Exposes REST endpoints for managing Leads and promoting them to Deals.
 Delegates all business logic to LeadService.
+
+SECURITY CONTROLS:
+- Duplicate email detection on create
+- Owner validation on create
+- State lock on converted leads (cannot edit)
 """
 
+import logging
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -18,10 +24,11 @@ from app.models.auth import User
 
 # --- Domain Imports ---
 from app.services.lead_service import LeadService
-from app.schemas.crm import LeadCreate, LeadOut, DealOut
+from app.schemas.crm import LeadCreate, LeadUpdate, LeadOut, DealOut
 
 # Initialize Router
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # --- Dependency Injection ---
 
@@ -78,6 +85,46 @@ def list_leads(
         limit=limit, 
         skip=skip
     )
+
+@router.patch("/{lead_id}", response_model=LeadOut)
+def update_lead(
+    lead_id: int,
+    lead_in: LeadUpdate,
+    service: LeadService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update a Lead's details (name, email).
+    
+    SECURITY: Converted leads cannot be modified.
+    
+    Returns:
+        Updated lead object
+        
+    Raises:
+        400: If lead is converted (immutable)
+        404: If lead not found
+    """
+    if not current_user.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User has no tenant."
+        )
+    
+    try:
+        return service.update_lead(
+            tenant_id=current_user.tenant_id,
+            lead_id=lead_id,
+            updates=lead_in.model_dump(exclude_unset=True)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error updating lead {lead_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update lead."
+        )
 
 @router.post("/{lead_id}/convert", response_model=DealOut)
 def convert_lead_to_deal(

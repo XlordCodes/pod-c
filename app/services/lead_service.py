@@ -6,10 +6,17 @@ Context: Pod B - Business Logic Layer.
 Orchestrates the lifecycle of Leads, including creation, listing, and the critical
 'promote_to_deal' workflow.
 Uses dependency injection for Repositories and the Event Bus.
+
+SECURITY CONTROLS:
+- Duplicate email detection (prevents duplicate leads)
+- Owner validation (ensures owner exists and belongs to tenant)
+- State lock on converted leads (prevents editing immutable leads)
 """
 
 import asyncio
+import logging
 from typing import List, Optional
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -17,13 +24,16 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.event_bus import event_bus, get_main_loop
 
 # Import Models, Schemas, and Events
-from app.schemas.crm import LeadCreate
+from app.schemas.crm import LeadCreate, LeadUpdate
 from app.models.crm import Lead, Deal
+from app.models.auth import User
 from app.events.crm_events import DealCreated
 
 # Import Repositories
 from app.repos.lead_repo import LeadRepo
 from app.repos.deal_repo import DealRepo
+
+logger = logging.getLogger(__name__)
 
 class LeadService:
     """
@@ -45,6 +55,10 @@ class LeadService:
         """
         Creates a new lead using the LeadRepo.
         
+        SECURITY VALIDATIONS:
+        1. Duplicate Email Check: Prevents creating leads with duplicate emails
+        2. Owner Validation: Ensures owner exists and belongs to the tenant
+        
         Args:
             tenant_id (int): The tenant context.
             owner_id (int): The user creating the lead.
@@ -52,7 +66,58 @@ class LeadService:
             
         Returns:
             Lead: The persisted lead object.
+            
+        Raises:
+            HTTPException: 400 if validation fails
         """
+        # =====================================================================
+        # SECURITY VALIDATION 1: Duplicate Email Check
+        # =====================================================================
+        if data.email:
+            existing_lead = (
+                self.db.query(Lead)
+                .filter(
+                    Lead.tenant_id == tenant_id,
+                    Lead.email == data.email
+                )
+                .first()
+            )
+            
+            if existing_lead:
+                logger.warning(
+                    f"Duplicate lead creation attempt: email '{data.email}' "
+                    f"already exists for tenant {tenant_id} (Lead ID: {existing_lead.id})"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Lead with email '{data.email}' already exists."
+                )
+        
+        # =====================================================================
+        # SECURITY VALIDATION 2: Owner Validation
+        # =====================================================================
+        owner = self.db.query(User).filter(User.id == owner_id).first()
+        
+        if not owner:
+            logger.warning(
+                f"Invalid owner_id {owner_id} - user does not exist"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid owner_id: User does not exist."
+            )
+        
+        if owner.tenant_id != tenant_id:
+            logger.warning(
+                f"Cross-tenant lead assignment attempt: owner {owner_id} "
+                f"(tenant {owner.tenant_id}) cannot own lead in tenant {tenant_id}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid owner_id: User belongs to another tenant."
+            )
+        
+        # All validations passed - create the lead
         return self.lead_repo.create(tenant_id, owner_id, data)
 
     def list_leads(self, tenant_id: int, limit: int = 100, skip: int = 0) -> List[Lead]:
@@ -68,6 +133,59 @@ class LeadService:
             List[Lead]: A list of lead objects.
         """
         return self.lead_repo.list_all(tenant_id, limit, skip)
+    
+    def update_lead(self, tenant_id: int, lead_id: int, updates: dict) -> Lead:
+        """
+        Updates a lead's details (name, email).
+        
+        SECURITY VALIDATION:
+        - State Lock: Prevents editing converted leads (immutable)
+        
+        Args:
+            tenant_id (int): Tenant context for isolation
+            lead_id (int): ID of the lead to update
+            updates (dict): Dictionary of fields to update
+            
+        Returns:
+            Lead: Updated lead object
+            
+        Raises:
+            HTTPException: 400 if lead is converted or not found
+        """
+        # 1. Fetch the lead
+        lead = self.lead_repo.get(lead_id, tenant_id)
+        
+        if not lead:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Lead not found"
+            )
+        
+        # =====================================================================
+        # SECURITY VALIDATION: State Lock on Converted Leads
+        # =====================================================================
+        # CRITICAL: Converted leads are immutable - they represent historical data
+        # that has been promoted to a Deal. Allowing edits would break data integrity.
+        if lead.status == "converted":
+            logger.warning(
+                f"Attempted edit of converted lead {lead_id} by tenant {tenant_id}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot modify a converted lead. Converted leads are immutable."
+            )
+        
+        # 3. Apply updates (only allowed fields)
+        allowed_fields = {'name', 'email'}
+        for key, value in updates.items():
+            if key in allowed_fields:
+                setattr(lead, key, value)
+        
+        self.db.commit()
+        self.db.refresh(lead)
+        
+        logger.info(f"Updated lead {lead_id} for tenant {tenant_id}")
+        return lead
 
     def promote_to_deal(
         self, 

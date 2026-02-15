@@ -95,6 +95,16 @@ class LeadCreate(BaseModel):
     name: str = Field(..., min_length=2, description="Full name of the lead")
     email: Optional[EmailStr] = Field(None, description="Contact email")
 
+class LeadUpdate(BaseModel):
+    """
+    Payload for updating a Lead (Partial Update).
+    All fields are optional.
+    
+    SECURITY: Converted leads cannot be updated (enforced in service layer).
+    """
+    name: Optional[str] = Field(None, min_length=2, description="Full name of the lead")
+    email: Optional[EmailStr] = Field(None, description="Contact email")
+
 class LeadOut(BaseModel):
     """Response model for Lead details."""
     id: int
