@@ -67,8 +67,10 @@ class InventoryRepo:
         
         # Apply row-level lock if requested and database supports it
         if for_update:
-            dialect = self.db.bind.dialect.name
-            if dialect != 'sqlite':
+            dialect_name = self.db.bind.dialect.name
+            # CRITICAL FIX: Check if dialect starts with 'sqlite' to handle variants
+            # like 'sqlite', 'sqlite+pysqlite', 'sqlite+aiosqlite', etc.
+            if not dialect_name.startswith('sqlite'):
                 query = query.with_for_update()
         
         return query.first()
@@ -83,6 +85,11 @@ class InventoryRepo:
         NOTE: SQLite does not support FOR UPDATE, so we skip it for SQLite.
         In production (PostgreSQL), this provides proper row-level locking.
         
+        CRITICAL FIX: Uses .startswith('sqlite') to handle all SQLite dialect variants:
+        - 'sqlite' (base)
+        - 'sqlite+pysqlite' (common)
+        - 'sqlite+aiosqlite' (async)
+        
         Args:
             tenant_id (int): Context tenant.
             product_id (int): Product to lock.
@@ -95,10 +102,10 @@ class InventoryRepo:
             Product.tenant_id == tenant_id
         )
         
-        # Only apply FOR UPDATE for PostgreSQL (not SQLite)
-        # SQLite doesn't support row-level locking with FOR UPDATE
-        dialect = self.db.bind.dialect.name
-        if dialect != 'sqlite':
+        # Only apply FOR UPDATE for PostgreSQL (not SQLite variants)
+        # CRITICAL: Use startswith() to catch all SQLite dialect variations
+        dialect_name = self.db.bind.dialect.name
+        if not dialect_name.startswith('sqlite'):
             query = query.with_for_update()
         
         return query.first()

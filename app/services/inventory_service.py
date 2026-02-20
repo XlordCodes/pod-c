@@ -13,14 +13,28 @@ Standards:
 - Strict Typing
 - Atomic Transactions
 - "Fire-and-Forget" Event Dispatch (Sync -> Async Bridge)
+
+CONCURRENCY HANDLING:
+- Implements retry logic for database lock errors (SQLite/PostgreSQL)
+- Uses tenacity for exponential backoff with jitter
+- Critical for high-concurrency scenarios (Flash Sales, Bulk Operations)
 """
 
 import asyncio
 import logging
+import random
 from typing import List, Optional
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, OperationalError
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_random_exponential,
+    retry_if_exception_type,
+    before_sleep_log,
+    after_log
+)
 
 from app.repos.inventory_repo import InventoryRepo
 from app.services.audit_service import AuditService
@@ -32,6 +46,48 @@ from app.core.event_bus import event_bus, get_main_loop
 from app.events.inventory_events import LowStockEvent, StockAdjustedEvent
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# RETRY CONFIGURATION FOR DATABASE LOCKS
+# ============================================================================
+
+# Retry decorator for handling database lock errors (SQLite "database is locked",
+# PostgreSQL deadlock detection)
+def _is_database_lock_error(exception: BaseException) -> bool:
+    """
+    Check if the exception is a database lock/deadlock error.
+    
+    SQLite: "database is locked" (OperationalError)
+    PostgreSQL: "deadlock detected" (OperationalError with specific message)
+    """
+    if isinstance(exception, OperationalError):
+        error_msg = str(exception).lower()
+        # SQLite lock error
+        if "database is locked" in error_msg:
+            return True
+        # PostgreSQL deadlock
+        if "deadlock detected" in error_msg:
+            return True
+    return False
+
+
+# Custom retry strategy for database operations
+retry_on_db_lock = retry(
+    # Only retry on database lock errors
+    retry=retry_if_exception_type(OperationalError),
+    # Retry up to 5 times
+    stop=stop_after_attempt(5),
+    # Exponential backoff with jitter: 0.01s -> 0.05s -> 0.1s -> 0.2s -> 0.4s
+    # Plus random jitter to prevent thundering herd
+    wait=wait_random_exponential(multiplier=0.01, min=0.01, max=0.5),
+    # Log before each retry for debugging
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    # Log after successful retry
+    after=after_log(logger, logging.DEBUG),
+    # Re-raise the last exception if all retries fail
+    reraise=True
+)
 
 class InventoryService:
     """
@@ -126,6 +182,67 @@ class InventoryService:
     def list_products(self, tenant_id: int, skip: int = 0, limit: int = 100) -> List[Product]:
         return self.repo.list_products(tenant_id, skip, limit)
 
+    def _adjust_stock_atomic(
+        self, 
+        tenant_id: int, 
+        product_id: int, 
+        adjustment: StockAdjustment,
+        user_id: Optional[int] = None
+    ) -> Product:
+        """
+        Internal atomic stock adjustment operation.
+        
+        This method is wrapped with retry logic to handle database lock errors.
+        It contains ONLY the database operations that need to be retried.
+        
+        CRITICAL: Uses row locking (SELECT FOR UPDATE) to prevent race conditions
+        during high-concurrency stock updates.
+        
+        Returns the updated Product on success.
+        Raises OperationalError on database lock (will be retried by decorator).
+        Raises HTTPException on business rule violations (NOT retried).
+        """
+        # 1. Fetch Product with Write Lock
+        # This ensures no other transaction can modify this product until we commit.
+        product = self.repo.get_product_for_update(tenant_id, product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        # 2. Business Rule: Prevent negative stock
+        new_level = product.stock + adjustment.qty
+        if new_level < 0:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Insufficient stock. Current: {product.stock}, Requested: {abs(adjustment.qty)}"
+            )
+
+        # 3. Execute Transaction (Atomic Update)
+        self.repo.create_transaction(
+            product=product,
+            change=adjustment.qty,
+            reason=adjustment.reason,
+            ref_id=adjustment.reference_id
+        )
+        
+        # 4. Audit Log
+        self.audit.log_event(
+            actor_id=user_id,
+            entity="Product",
+            entity_id=product.id,
+            action="adjust_stock",
+            changes={
+                "change": adjustment.qty,
+                "reason": adjustment.reason,
+                "new_stock": new_level
+            }
+        )
+        
+        # 5. Commit Atomic Transaction
+        self.db.commit()
+        self.db.refresh(product)
+        
+        return product
+
     def adjust_stock(
         self, 
         tenant_id: int, 
@@ -137,50 +254,26 @@ class InventoryService:
         Moves stock IN/OUT.
         Triggers: Audit Log, StockAdjustedEvent, LowStockEvent.
         
-        CRITICAL: Uses row locking (SELECT FOR UPDATE) to prevent race conditions
-        during high-concurrency stock updates.
+        CONCURRENCY HANDLING:
+        - Wraps the atomic operation with retry logic for database lock errors
+        - SQLite: Retries on "database is locked" errors
+        - PostgreSQL: Retries on deadlock detection
+        - Uses exponential backoff with jitter to prevent thundering herd
+        
+        Returns the updated Product on success.
         """
         try:
-            # 1. Fetch Product with Write Lock
-            # This ensures no other transaction can modify this product until we commit.
-            product = self.repo.get_product_for_update(tenant_id, product_id)
-            if not product:
-                raise HTTPException(status_code=404, detail="Product not found")
-
-            # 2. Business Rule: Prevent negative stock
-            new_level = product.stock + adjustment.qty
-            if new_level < 0:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Insufficient stock. Current: {product.stock}, Requested: {abs(adjustment.qty)}"
-                )
-
-            # 3. Execute Transaction (Atomic Update)
-            self.repo.create_transaction(
-                product=product,
-                change=adjustment.qty,
-                reason=adjustment.reason,
-                ref_id=adjustment.reference_id
+            # Execute the atomic operation with retry logic
+            # The retry_on_db_lock decorator handles OperationalError retries
+            product = retry_on_db_lock(self._adjust_stock_atomic)(
+                tenant_id, product_id, adjustment, user_id
             )
             
-            # 4. Audit Log
-            self.audit.log_event(
-                actor_id=user_id,
-                entity="Product",
-                entity_id=product.id,
-                action="adjust_stock",
-                changes={
-                    "change": adjustment.qty,
-                    "reason": adjustment.reason,
-                    "new_stock": new_level
-                }
-            )
+            # Calculate new level for events (product is already updated)
+            new_level = product.stock
             
-            # 5. Commit Atomic Transaction
-            self.db.commit()
-            self.db.refresh(product)
-
             # 6. Publish Events (Fire-and-Forget AFTER successful commit)
+            # These are NOT retried - they're best-effort notifications
             
             # Event A: General Stock Change
             self._publish_event_safe(StockAdjustedEvent(
@@ -206,6 +299,14 @@ class InventoryService:
             
             return product
 
+        except OperationalError as e:
+            # All retries exhausted - database still locked
+            self.db.rollback()
+            logger.error(f"Database lock error after retries: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
+                detail="Service temporarily unavailable. Please retry."
+            )
         except SQLAlchemyError as e:
             self.db.rollback()
             logger.error(f"Database error adjusting stock: {e}")
