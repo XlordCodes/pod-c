@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 from app.models.audit import AuditLog, ActivityFeed
+from app.models.auth import User
 
 class AuditRepo:
     """
@@ -33,6 +34,7 @@ class AuditRepo:
 
     def list_logs(
         self, 
+        tenant_id: int,
         entity: Optional[str] = None, 
         entity_id: Optional[int] = None, 
         actor_id: Optional[int] = None,
@@ -41,8 +43,29 @@ class AuditRepo:
     ) -> List[AuditLog]:
         """
         Retrieves a paginated list of audit logs based on filters.
+        
+        SECURITY: tenant_id is a required parameter to enforce multi-tenancy.
+        Since AuditLog does not have a tenant_id column, we join with the User table
+        to filter by the user's tenant membership.
+        
+        Args:
+            tenant_id (int): The tenant context for multi-tenancy enforcement.
+            entity (Optional[str]): Filter by entity type (e.g., 'Invoice', 'Lead').
+            entity_id (Optional[int]): Filter by specific entity ID.
+            actor_id (Optional[int]): Filter by the user who performed the action.
+            limit (int): Maximum number of records to return.
+            skip (int): Number of records to skip for pagination.
+            
+        Returns:
+            List[AuditLog]: List of audit log entries for the tenant.
         """
-        query = self.db.query(AuditLog)
+        # Join with User table to enforce tenant isolation
+        # AuditLog does not have tenant_id, so we filter via the actor's tenant
+        query = self.db.query(AuditLog).join(
+            User, AuditLog.actor_id == User.id
+        ).filter(
+            User.tenant_id == tenant_id
+        )
 
         if entity:
             query = query.filter(AuditLog.entity == entity)

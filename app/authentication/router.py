@@ -16,7 +16,7 @@ from . import crud, hashing, schemas
 
 # --- CONFIGURATION ---
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v1/api/auth/token")
 
 router = APIRouter(
     tags=["Authentication"]
@@ -92,14 +92,15 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(database.get_d
         raise HTTPException(status_code=400, detail="Email already registered")
     
     hashed_password = hashing.hash_password(user.password)
-    return crud.create_user(
+    new_user = crud.create_user(
         db=db, 
         email=user.email, 
         name=user.name, 
-        hashed_password=hashed_password,
-        tenant_id=user.tenant_id,
-        role_id=user.role_id
+        hashed_password=hashed_password
     )
+    db.commit()
+    db.refresh(new_user)
+    return new_user
 
 
 @router.post("/token", response_model=schemas.Token)

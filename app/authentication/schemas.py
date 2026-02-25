@@ -13,11 +13,13 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """
     Payload for registering a new user.
+    
+    SECURITY: tenant_id and role_id are intentionally excluded from public input
+    to prevent IDOR and privilege escalation vulnerabilities. Tenant and role
+    assignment is deferred to a secure workspace creation/invitation flow.
     """
     password: str
-    # The system must explicitly derive or request the tenant context.
-    tenant_id: Optional[int] = None
-    role_id: Optional[int] = None
+    company_name: Optional[str] = None
 
 class User(UserBase):
     """

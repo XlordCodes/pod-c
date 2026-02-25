@@ -11,6 +11,11 @@ Usage:
     python -m app.seeds database  # Reset core DB (Users, Roles)
     python -m app.seeds inventory # Add Products/Stock
     python -m app.seeds analytics # Simulate traffic (Requires Server Up)
+
+ERROR HANDLING:
+    - Any seed failure triggers immediate exit with non-zero status code
+    - Errors are logged before exit for debugging
+    - No "Completed" message is shown on failure
 """
 
 import sys
@@ -19,7 +24,6 @@ import time
 from typing import Callable
 
 # Import Seed Modules
-# We import these directly as we now know their exact structure from your snippets.
 try:
     from app.seeds import seed_database
     from app.seeds import seed_inventory
@@ -39,7 +43,19 @@ logger = logging.getLogger("SeedRunner")
 
 def run_step(name: str, func: Callable, *args, **kwargs):
     """
-    Executes a seed step with uniform error handling and logging.
+    Executes a seed step with strict error handling.
+    
+    On failure:
+    - Logs the error with full details
+    - Exits immediately with non-zero status code
+    
+    Args:
+        name (str): Human-readable name for the seed step
+        func (Callable): The seed function to execute
+        *args, **kwargs: Arguments to pass to the function
+        
+    Raises:
+        SystemExit: Always exits with code 1 on any exception
     """
     logger.info(f"⏳ Starting: {name}...")
     try:
@@ -50,25 +66,20 @@ def run_step(name: str, func: Callable, *args, **kwargs):
     except Exception as e:
         logger.error(f"❌ Failed: {name}")
         logger.error(f"   Reason: {str(e)}")
-        # We don't exit here to allow subsequent independent seeds (optional behavior)
-        # But for 'database' seed failure, we usually want to stop.
-        if name == "Database Seed":
-            sys.exit(1)
+        # Strict error handling: exit immediately with non-zero status
+        sys.exit(1)
 
 def run_database():
     """Wrapper for seed_database.py"""
-    # Calls the 'seed()' function identified in your snippet
     run_step("Core Database Seed (Users/Roles)", seed_database.seed)
 
 def run_inventory():
     """Wrapper for seed_inventory.py"""
-    # Calls the 'seed_inventory()' function identified in your snippet
     run_step("Inventory Seed (Products/Stock)", seed_inventory.seed_inventory)
 
 def run_analytics():
     """Wrapper for seed_analytics.py"""
     logger.info("ℹ️  Note: Analytics seed requires the API server to be running at localhost:8000.")
-    # Calls the 'run_simulation()' function identified in your snippet
     run_step("Analytics Simulation (Webhooks)", seed_analytics.run_simulation)
 
 def run_all():
@@ -77,6 +88,8 @@ def run_all():
     1. Database (Clears DB, creates Users/Roles)
     2. Inventory (Creates Products, links to Users)
     3. Analytics (Simulates traffic against the system)
+    
+    Any failure stops the entire process immediately.
     """
     logger.info("🚀 Starting Full System Seeding\n")
     

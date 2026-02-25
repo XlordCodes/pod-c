@@ -1,16 +1,31 @@
+# app/seeds/seed_analytics.py
+"""
+Module: Analytics Seeder
+Context: Pod B - Module 6 (Data Fixtures)
+
+Simulates WhatsApp webhook traffic to populate analytics data.
+Requires the API server to be running at localhost:8000.
+
+ERROR HANDLING:
+    - Any failure triggers a clear error message and non-zero exit
+    - Network errors are not silently swallowed
+"""
+
+import sys
 import requests
 import json
 import hmac
 import hashlib
-import os
 import time
 import random
 from dotenv import load_dotenv
 
+# Import settings to access the WhatsApp app secret
+from app.core.config import settings
+
 # Load Config
 load_dotenv()
 BASE_URL = "http://localhost:8000"
-APP_SECRET = os.getenv("WHATSAPP_APP_SECRET")
 
 # Test Data: (Phone, Message, Expected Sentiment)
 TEST_DATA = [
@@ -23,72 +38,166 @@ TEST_DATA = [
     ("919000000007", "Excellent support team, thank you!", "positive"),
 ]
 
+
 def send_signed_webhook(payload):
-    """Sends payload with valid HMAC signature."""
+    """
+    Sends payload with valid HMAC signature.
+    
+    Uses the WhatsApp app secret from settings to ensure the signature
+    matches what the backend expects.
+    
+    Args:
+        payload (dict): The webhook payload to send.
+        
+    Raises:
+        requests.RequestException: On network or HTTP errors.
+    """
     payload_str = json.dumps(payload, separators=(',', ':'))
     payload_bytes = payload_str.encode('utf-8')
-    mac = hmac.new(APP_SECRET.encode(), msg=payload_bytes, digestmod=hashlib.sha256)
-    headers = {"X-Hub-Signature": f"sha256={mac.hexdigest()}", "Content-Type": "application/json"}
     
-    try:
-        requests.post(f"{BASE_URL}/api/webhooks/whatsapp", data=payload_bytes, headers=headers)
-    except Exception as e:
-        print(f"❌ Error: {e}")
+    # Use settings.WHATSAPP_APP_SECRET directly to match the backend
+    mac = hmac.new(
+        settings.WHATSAPP_APP_SECRET.encode(), 
+        msg=payload_bytes, 
+        digestmod=hashlib.sha256
+    )
+    
+    headers = {
+        "X-Hub-Signature-256": f"sha256={mac.hexdigest()}",
+        "Content-Type": "application/json"
+    }
+    
+    response = requests.post(
+        f"{BASE_URL}/v1/api/webhooks/whatsapp", 
+        data=payload_bytes, 
+        headers=headers,
+        timeout=10
+    )
+    response.raise_for_status()
+
 
 def run_simulation():
+    """
+    Main execution function for analytics seeding.
+    
+    Sends simulated WhatsApp messages to populate the analytics dashboard.
+    
+    Raises:
+        Exception: Re-raises any error for caller to handle.
+    """
     print(f"🚀 Starting Data Seeding for {len(TEST_DATA)} conversations...")
     
     generated_wamids = []
 
-    # 1. Loop through data and create conversations
-    for phone, text, sentiment in TEST_DATA:
-        wamid = f"wamid.SEED.{random.randint(1000, 9999)}"
-        generated_wamids.append(wamid)
-        
-        print(f"   -> Msg from {phone}: '{text[:30]}...' ({sentiment})")
-        
-        # A. Incoming Message
-        msg_payload = {
-            "entry": [{"changes": [{"value": {"messages": [{
-                "from": phone,
-                "id": wamid,
-                "type": "text",
-                "text": {"body": text},
-                "timestamp": str(int(time.time()))
-            }]}}]}]
-        }
-        send_signed_webhook(msg_payload)
-        
-        # B. Lifecycle Updates (Simulate network delay)
-        # Status: SENT
-        send_signed_webhook({"entry": [{"changes": [{"value": {"statuses": [{"id": wamid, "status": "sent", "recipient_id": phone, "timestamp": str(int(time.time()))}]}}]}]})
-        
-        # Status: DELIVERED
-        send_signed_webhook({"entry": [{"changes": [{"value": {"statuses": [{"id": wamid, "status": "delivered", "timestamp": str(int(time.time()))}]}}]}]})
-        
-        # Status: READ (Only read 50% of them to make stats realistic)
-        if random.choice([True, False]):
-            send_signed_webhook({"entry": [{"changes": [{"value": {"statuses": [{"id": wamid, "status": "read", "timestamp": str(int(time.time()))}]}}]}]})
+    try:
+        # 1. Loop through data and create conversations
+        for phone, text, sentiment in TEST_DATA:
+            wamid = f"wamid.SEED.{random.randint(1000, 9999)}"
+            generated_wamids.append(wamid)
             
-    print("\n⏱️  Simulating 'Avg Response Time' (Adding 2nd msg for User 1)...")
-    # Add a 2nd message for the first user to create a "Time Gap" for the analytics view
-    time.sleep(2) # Wait 2 seconds so the gap is measurable
-    
-    wamid_2 = "wamid.SEED.SECOND"
-    phone_1 = TEST_DATA[0][0]
-    msg_2 = {
-        "entry": [{"changes": [{"value": {"messages": [{
-            "from": phone_1,
-            "id": wamid_2,
-            "type": "text",
-            "text": {"body": "Also, do you have a discount?"},
-            "timestamp": str(int(time.time()))
-        }]}}]}]
-    }
-    send_signed_webhook(msg_2)
-    print("   -> 2nd Msg sent.")
+            print(f"   -> Msg from {phone}: '{text[:30]}...' ({sentiment})")
+            
+            # A. Incoming Message
+            msg_payload = {
+                "entry": [{
+                    "changes": [{
+                        "value": {
+                            "messages": [{
+                                "from": phone,
+                                "id": wamid,
+                                "type": "text",
+                                "text": {"body": text},
+                                "timestamp": str(int(time.time()))
+                            }]
+                        }
+                    }]
+                }]
+            }
+            send_signed_webhook(msg_payload)
+            
+            # B. Lifecycle Updates (Simulate network delay)
+            # Status: SENT
+            send_signed_webhook({
+                "entry": [{
+                    "changes": [{
+                        "value": {
+                            "statuses": [{
+                                "id": wamid,
+                                "status": "sent",
+                                "recipient_id": phone,
+                                "timestamp": str(int(time.time()))
+                            }]
+                        }
+                    }]
+                }]
+            })
+            
+            # Status: DELIVERED
+            send_signed_webhook({
+                "entry": [{
+                    "changes": [{
+                        "value": {
+                            "statuses": [{
+                                "id": wamid,
+                                "status": "delivered",
+                                "timestamp": str(int(time.time()))
+                            }]
+                        }
+                    }]
+                }]
+            })
+            
+            # Status: READ (Only read 50% of them to make stats realistic)
+            if random.choice([True, False]):
+                send_signed_webhook({
+                    "entry": [{
+                        "changes": [{
+                            "value": {
+                                "statuses": [{
+                                    "id": wamid,
+                                    "status": "read",
+                                    "timestamp": str(int(time.time()))
+                                }]
+                            }
+                        }]
+                    }]
+                })
+                
+        print("\n⏱️  Simulating 'Avg Response Time' (Adding 2nd msg for User 1)...")
+        # Add a 2nd message for the first user to create a "Time Gap" for the analytics view
+        time.sleep(2) # Wait 2 seconds so the gap is measurable
+        
+        wamid_2 = "wamid.SEED.SECOND"
+        phone_1 = TEST_DATA[0][0]
+        msg_2 = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "messages": [{
+                            "from": phone_1,
+                            "id": wamid_2,
+                            "type": "text",
+                            "text": {"body": "Also, do you have a discount?"},
+                            "timestamp": str(int(time.time()))
+                        }]
+                    }
+                }]
+            }]
+        }
+        send_signed_webhook(msg_2)
+        print("   -> 2nd Msg sent.")
 
-    print("\n✅ Seeding Complete. Check Swagger UI!")
+        print("\n✅ Seeding Complete. Check Swagger UI!")
+        
+    except requests.RequestException as e:
+        print(f"❌ Network Error: {str(e)}")
+        raise
+    except Exception as e:
+        print(f"❌ Seeding Failed: {str(e)}")
+        raise
 
 if __name__ == "__main__":
-    run_simulation()
+    try:
+        run_simulation()
+    except Exception:
+        sys.exit(1)

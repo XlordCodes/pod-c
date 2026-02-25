@@ -7,6 +7,8 @@ Exposes endpoints to:
 1. Manually trigger embedding for a specific message (Backfilling/Re-indexing).
 2. Search for similar messages using Semantic Search (pgvector).
 3. Summarize conversation history using LLMs.
+
+SECURITY: All endpoints require JWT authentication.
 """
 
 from typing import List, Dict, Any
@@ -17,11 +19,17 @@ from app.database import get_db
 from app.services.embedding_service import EmbeddingService
 from app.services.summary_service import SummaryService
 from app.models import ChatMessage
+from app.authentication.router import get_current_user
+from app.models.auth import User
 
 router = APIRouter()
 
 @router.post("/embed-message", status_code=status.HTTP_201_CREATED)
-def embed_message(message_id: int, db: Session = Depends(get_db)) -> Dict[str, Any]:
+def embed_message(
+    message_id: int, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     """
     Trigger embedding generation for a specific message.
     
@@ -29,9 +37,12 @@ def embed_message(message_id: int, db: Session = Depends(get_db)) -> Dict[str, A
     embedding via the EmbeddingService (OpenAI), and persists it to the database 
     using an atomic transaction.
     
+    SECURITY: Requires valid JWT authentication.
+    
     Args:
         message_id (int): The ID of the message to embed.
         db (Session): Database session dependency.
+        current_user (User): The authenticated user making the request.
         
     Returns:
         dict: Status and processed message ID.
@@ -72,16 +83,24 @@ def embed_message(message_id: int, db: Session = Depends(get_db)) -> Dict[str, A
         )
 
 @router.get("/similar")
-def find_similar(text: str, limit: int = 5, db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
+def find_similar(
+    text: str, 
+    limit: int = 5, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> List[Dict[str, Any]]:
     """
     Find messages semantically similar to the input text.
     
     Uses Cosine Similarity (via pgvector <=> operator) to rank messages by relevance.
     
+    SECURITY: Requires valid JWT authentication.
+    
     Args:
         text (str): The query text to compare against.
         limit (int): Maximum number of results to return (default: 5).
         db (Session): Database session dependency.
+        current_user (User): The authenticated user making the request.
         
     Returns:
         List[Dict]: A list of matched messages with their IDs and distance scores.
@@ -110,16 +129,23 @@ def find_similar(text: str, limit: int = 5, db: Session = Depends(get_db)) -> Li
         )
 
 @router.get("/summarize/{cid}")
-def summarize_conversation(cid: int, db: Session = Depends(get_db)) -> Dict[str, Any]:
+def summarize_conversation(
+    cid: int, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     """
     Generate an AI summary for the given conversation ID.
     
     Uses the ChatService to fetch message history and the SummaryService (OpenAI)
     to generate a concise summary of the interaction.
     
+    SECURITY: Requires valid JWT authentication.
+    
     Args:
         cid (int): The Conversation ID.
         db (Session): Database session dependency.
+        current_user (User): The authenticated user making the request.
         
     Returns:
         dict: The conversation ID and the generated summary text.

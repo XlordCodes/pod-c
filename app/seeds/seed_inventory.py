@@ -6,8 +6,13 @@ Context: Pod B - Module 6 (Data Fixtures)
 Populates the database with realistic demo inventory data.
 Uses the InventoryService to ensure all side-effects (Audit Logs, Stock Transactions) 
 are triggered correctly, preserving data integrity.
+
+ERROR HANDLING:
+    - Any failure triggers a full rollback and re-raises the exception
+    - Caller is responsible for handling the error (non-zero exit code)
 """
 
+import sys
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.services.inventory_service import InventoryService
@@ -54,6 +59,12 @@ SEED_DATA = [
 def get_system_user(db: Session) -> User:
     """
     Retrieves or creates a system admin user to act as the 'actor' for seed operations.
+    
+    Returns:
+        User: The system admin user for audit logging.
+        
+    Raises:
+        Exception: Re-raises any database errors.
     """
     # 1. Try to find the admin created by seed_database.py
     user = db.query(User).filter(User.email == "admin@ryze.com").first()
@@ -80,7 +91,12 @@ def get_system_user(db: Session) -> User:
 
 def seed_inventory():
     """
-    Main execution function.
+    Main execution function for inventory seeding.
+    
+    Creates products and initial stock for the demo tenant.
+    
+    Raises:
+        Exception: Re-raises any error after rollback for caller to handle.
     """
     db = SessionLocal()
     try:
@@ -133,8 +149,12 @@ def seed_inventory():
     except Exception as e:
         print(f"❌ Seeding Failed: {str(e)}")
         db.rollback()
+        raise  # Re-raise for caller to handle
     finally:
         db.close()
 
 if __name__ == "__main__":
-    seed_inventory()
+    try:
+        seed_inventory()
+    except Exception:
+        sys.exit(1)

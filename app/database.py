@@ -36,7 +36,7 @@ def set_tenant_context(session: Session, transaction, connection):
     """
     tenant_id = get_tenant_id()
     if tenant_id is not None:
-        session.execute(
+        connection.execute(
             text("SELECT set_config('app.current_tenant', :tenant_id, false)"), 
             {"tenant_id": str(tenant_id)}
         )

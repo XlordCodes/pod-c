@@ -118,7 +118,10 @@ class LeadService:
             )
         
         # All validations passed - create the lead
-        return self.lead_repo.create(tenant_id, owner_id, data)
+        lead = self.lead_repo.create(tenant_id, owner_id, data)
+        self.db.commit()
+        self.db.refresh(lead)
+        return lead
 
     def list_leads(self, tenant_id: int, limit: int = 100, skip: int = 0) -> List[Lead]:
         """

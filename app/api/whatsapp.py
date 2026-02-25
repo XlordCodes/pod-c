@@ -5,15 +5,19 @@ Context: Pod C - Integrations
 
 Exposes endpoints to send WhatsApp messages.
 Delegates actual transmission logic to the robust 'whatsapp_client'.
+
+SECURITY: All endpoints require JWT authentication.
 """
 
 import logging
 from typing import Optional, List, Any
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, Field
 
 # Import the unified client we just created
 from app.integrations.whatsapp_client import whatsapp_client
+from app.authentication.router import get_current_user
+from app.models.auth import User
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -30,12 +34,27 @@ class WhatsAppTemplateSendIn(BaseModel):
     parameters: Optional[List[Any]] = Field(default=None, description="List of variable values for the template body")
 
 @router.post("/whatsapp/send-template", status_code=status.HTTP_200_OK)
-async def send_whatsapp_template(payload: WhatsAppTemplateSendIn):
+async def send_whatsapp_template(
+    payload: WhatsAppTemplateSendIn,
+    current_user: User = Depends(get_current_user)
+):
     """
     Sends a WhatsApp template message.
     
     Uses the asynchronous WhatsApp client to ensure non-blocking I/O
     and automatic retries for transient network failures.
+    
+    SECURITY: Requires valid JWT authentication.
+    
+    Args:
+        payload (WhatsAppTemplateSendIn): The template message details.
+        current_user (User): The authenticated user making the request.
+        
+    Returns:
+        dict: Status and provider response.
+        
+    Raises:
+        HTTPException 500: If the message fails to send.
     """
     try:
         # Delegate to the integration client
