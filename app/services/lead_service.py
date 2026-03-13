@@ -139,10 +139,11 @@ class LeadService:
     
     def update_lead(self, tenant_id: int, lead_id: int, updates: dict) -> Lead:
         """
-        Updates a lead's details (name, email).
+        Updates a lead's details (name, email, status).
         
         SECURITY VALIDATION:
         - State Lock: Prevents editing converted leads (immutable)
+        - Manual Conversion Bypass: Prevents patching status to 'converted' directly
         
         Args:
             tenant_id (int): Tenant context for isolation
@@ -153,7 +154,7 @@ class LeadService:
             Lead: Updated lead object
             
         Raises:
-            HTTPException: 400 if lead is converted or not found
+            HTTPException: 400 if lead is converted, if bypass attempted, or not found
         """
         # 1. Fetch the lead
         lead = self.lead_repo.get(lead_id, tenant_id)
@@ -177,9 +178,17 @@ class LeadService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot modify a converted lead. Converted leads are immutable."
             )
+
+        # SECURITY VALIDATION: Prevent manual conversion bypass
+        if updates.get("status") == "converted":
+            logger.warning(f"Attempted to bypass conversion workflow for lead {lead_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Leads cannot be manually patched to 'converted'. Use the /convert endpoint."
+            )
         
         # 3. Apply updates (only allowed fields)
-        allowed_fields = {'name', 'email'}
+        allowed_fields = {'name', 'email', 'status'}
         for key, value in updates.items():
             if key in allowed_fields:
                 setattr(lead, key, value)

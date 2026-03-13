@@ -1,4 +1,3 @@
-# app/schemas/crm.py
 """
 Module: CRM Schemas
 Context: Pod B - Data Validation Layer
@@ -10,6 +9,7 @@ Ensures strict typing and validation for API requests and responses.
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from typing import Optional, Dict, Any
 from datetime import datetime
+from enum import Enum
 import re
 
 # --- Contact Schemas ---
@@ -90,6 +90,13 @@ class ContactOut(ContactBase):
 
 # --- Lead Schemas ---
 
+class LeadStatus(str, Enum):
+    """Strict typing for lead pipeline stages."""
+    new = "new"
+    contacted = "contacted"
+    qualified = "qualified"
+    converted = "converted"
+
 class LeadCreate(BaseModel):
     """Payload for creating a new Lead."""
     name: str = Field(..., min_length=2, description="Full name of the lead")
@@ -104,13 +111,14 @@ class LeadUpdate(BaseModel):
     """
     name: Optional[str] = Field(None, min_length=2, description="Full name of the lead")
     email: Optional[EmailStr] = Field(None, description="Contact email")
+    status: Optional[LeadStatus] = Field(None, description="Update the current pipeline stage")
 
 class LeadOut(BaseModel):
     """Response model for Lead details."""
     id: int
     name: str
     email: Optional[EmailStr] = None
-    status: str
+    status: LeadStatus
     created_at: datetime
     tenant_id: int
     owner_id: int

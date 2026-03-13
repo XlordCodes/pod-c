@@ -24,7 +24,7 @@ from app.api.bulk import router as bulk_router
 from app.api.contacts import router as contacts_router
 from app.api.messages import router as messages_router
 
-# 4. Finance (Pod B - NEW)
+# 4. Finance (Pod B)
 from app.api.finance import router as finance_router
 from app.api.leads import router as leads_router
 
